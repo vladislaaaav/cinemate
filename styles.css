@@ -572,7 +572,7 @@ body {
     position: fixed;
     inset: 0;
     background: rgba(0,0,0,0.7);
-    z-index: 1000;
+    z-index: 1400;
     align-items: center;
     justify-content: center;
     padding: 20px;
@@ -688,7 +688,7 @@ body {
     padding: 0 12px;
     background: var(--bg-card);
     border-bottom: 1px solid var(--border);
-    z-index: 900;
+    z-index: 1200;
     align-items: center;
     gap: 12px;
 }
@@ -757,30 +757,99 @@ body {
 
 /* ===== Phone ===== */
 @media (max-width: 768px) {
-    .mobile-bar { display: flex; }
+    .app {
+        display: block;
+        min-height: 100dvh;
+    }
+
+    .mobile-bar {
+        display: flex;
+        z-index: 1200;
+        padding-top: env(safe-area-inset-top, 0);
+        height: calc(56px + env(safe-area-inset-top, 0px));
+    }
+
+    .sidebar-overlay {
+        z-index: 1250;
+    }
+    .sidebar-overlay.open {
+        display: block;
+    }
 
     .sidebar {
-        width: min(280px, 85vw);
-        max-width: 280px;
+        width: min(300px, 88vw);
+        max-width: 300px;
         padding: 20px 14px;
-        z-index: 1000;
+        padding-top: calc(16px + env(safe-area-inset-top, 0px));
+        left: 0;
+        top: 0;
+        height: 100dvh;
+        z-index: 1300;
         transform: translateX(-105%);
         transition: transform 0.25s ease;
         box-shadow: none;
+        pointer-events: none;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
     }
     .sidebar.open {
         transform: translateX(0);
         box-shadow: 8px 0 32px rgba(0,0,0,0.35);
+        pointer-events: auto;
     }
-    .sidebar-close { display: flex; align-items: center; justify-content: center; }
+    .sidebar-close {
+        display: flex !important;
+        align-items: center;
+        justify-content: center;
+        min-width: 44px;
+        min-height: 44px;
+    }
     .logo { margin-bottom: 24px; }
 
     .main {
-        margin-left: 0;
-        padding: 72px 14px 24px;
+        margin-left: 0 !important;
+        padding: calc(72px + env(safe-area-inset-top, 0px)) 14px 24px;
         width: 100%;
         max-width: 100%;
+        box-sizing: border-box;
     }
+
+    .menu-toggle {
+        min-width: 44px;
+        min-height: 44px;
+        font-size: 22px;
+        touch-action: manipulation;
+    }
+
+    .nav-btn, .small-btn, .btn-primary, .btn-secondary, .btn-danger {
+        touch-action: manipulation;
+        -webkit-tap-highlight-color: transparent;
+    }
+
+    .collection-actions {
+        flex-direction: column;
+    }
+    .collection-actions button {
+        width: 100%;
+        min-height: 44px;
+    }
+
+    .user-actions {
+        flex-direction: column;
+    }
+    .user-actions .small-btn {
+        width: 100%;
+        min-height: 40px;
+    }
+
+    .search-external {
+        flex-direction: column;
+    }
+    .search-external input,
+    .search-external button {
+        width: 100%;
+    }
+
 
     .page-header {
         flex-direction: column;

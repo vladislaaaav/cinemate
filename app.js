@@ -411,9 +411,14 @@ function openMobileSidebar() {
     document.body.style.overflow = 'hidden';
 }
 
-document.getElementById('menu-toggle')?.addEventListener('click', openMobileSidebar);
-document.getElementById('sidebar-close')?.addEventListener('click', closeMobileSidebar);
-document.getElementById('sidebar-overlay')?.addEventListener('click', closeMobileSidebar);
+function bindTap(el, fn) {
+    if (!el) return;
+    el.addEventListener('click', fn);
+    el.addEventListener('touchend', (e) => { e.preventDefault(); fn(e); }, { passive: false });
+}
+bindTap(document.getElementById('menu-toggle'), openMobileSidebar);
+bindTap(document.getElementById('sidebar-close'), closeMobileSidebar);
+bindTap(document.getElementById('sidebar-overlay'), closeMobileSidebar);
 
 document.querySelectorAll('.nav-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1616,7 +1621,7 @@ async function renderSharedWithMe() {
                 <h3>${s.name || 'Подборка'} <span class="badge-open">Общая</span></h3>
                 <div class="count">${s.itemCount || 0} элементов · от ${s.ownerName || s.ownerEmail || 'пользователя'}</div>
                 <div class="collection-actions">
-                    <button class="btn-primary" onclick="openSharedCollection('${s.ownerId}','${s.collectionId}','${safeName}')">Смотреть</button>
+                    <button class="btn-primary" onclick="openSharedCollection('${s.ownerId}','${s.collectionId}','${safeName}')">Открыть / править</button>
                 </div>
             </div>`;
         }).join('');
@@ -1626,29 +1631,116 @@ async function renderSharedWithMe() {
     }
 }
 
+let sharedEdit = { ownerId: null, collectionId: null, items: [], name: '' };
+
+function renderSharedEditModal() {
+    const body = document.getElementById('modal-body');
+    if (!body) return;
+    const itemsList = sharedEdit.items || [];
+    const inCol = new Set(itemsList.map(i => i.id));
+    const myPool = (items || []).filter(i => !inCol.has(i.id));
+
+    body.innerHTML = `
+        <h2 style="margin-bottom:8px">Редактирование общей подборки</h2>
+        <p class="hint" style="margin-bottom:12px">Вы можете менять название, удалять и добавлять фильмы (из своей библиотеки).</p>
+        <div class="form-group">
+            <label>Название</label>
+            <input type="text" id="shared-edit-name" value="${(sharedEdit.name || '').replace(/"/g, '&quot;')}">
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin:12px 0">
+            <button type="button" class="btn-primary" id="shared-edit-save">💾 Сохранить</button>
+            <button type="button" class="btn-secondary" id="shared-edit-close">Закрыть</button>
+        </div>
+        <h3 style="font-size:15px;margin:16px 0 8px">В подборке (${itemsList.length})</h3>
+        <div class="content-grid" id="shared-edit-grid">
+            ${itemsList.length ? itemsList.map(item => `
+                <div class="card" style="cursor:default">
+                    <div class="card-poster">
+                        ${item.poster ? `<img src="${item.poster}" alt="" loading="lazy">` : '🎬'}
+                    </div>
+                    <div class="card-body">
+                        <div class="card-title">${item.title || ''}</div>
+                        <div class="card-meta">${item.year || '—'}</div>
+                        <button type="button" class="btn-secondary" style="margin-top:8px;width:100%;padding:8px;font-size:12px"
+                            onclick="sharedEditRemove('${item.id}')">Удалить из подборки</button>
+                    </div>
+                </div>
+            `).join('') : '<p class="hint" style="grid-column:1/-1">Пока пусто — добавьте фильмы ниже</p>'}
+        </div>
+        <h3 style="font-size:15px;margin:20px 0 8px">Добавить из моей библиотеки</h3>
+        <div class="content-grid" id="shared-edit-pool">
+            ${myPool.length ? myPool.map(item => `
+                <div class="card" style="cursor:default">
+                    <div class="card-poster">
+                        ${item.poster ? `<img src="${item.poster}" alt="" loading="lazy">` : '🎬'}
+                    </div>
+                    <div class="card-body">
+                        <div class="card-title">${item.title || ''}</div>
+                        <button type="button" class="btn-primary" style="margin-top:8px;width:100%;padding:8px;font-size:12px"
+                            onclick="sharedEditAdd('${item.id}')">+ Добавить</button>
+                    </div>
+                </div>
+            `).join('') : '<p class="hint" style="grid-column:1/-1">В вашей библиотеке нет фильмов для добавления</p>'}
+        </div>
+    `;
+
+    document.getElementById('shared-edit-save')?.addEventListener('click', sharedEditSave);
+    document.getElementById('shared-edit-close')?.addEventListener('click', () => {
+        document.getElementById('modal')?.classList.remove('open');
+    });
+}
+
+function sharedEditRemove(itemId) {
+    sharedEdit.items = (sharedEdit.items || []).filter(i => i.id !== itemId);
+    renderSharedEditModal();
+}
+
+function sharedEditAdd(itemId) {
+    const item = (items || []).find(i => i.id === itemId);
+    if (!item) return;
+    if ((sharedEdit.items || []).some(i => i.id === itemId)) return;
+    // копия объекта — уйдёт на сервер в библиотеку владельца
+    sharedEdit.items.push({ ...item });
+    renderSharedEditModal();
+}
+
+async function sharedEditSave() {
+    const name = document.getElementById('shared-edit-name')?.value.trim() || sharedEdit.name;
+    try {
+        toast('Сохранение...');
+        const data = await Storage.api(
+            `/api/shared-collection/${sharedEdit.ownerId}/${sharedEdit.collectionId}`,
+            {
+                method: 'PUT',
+                body: JSON.stringify({
+                    name,
+                    itemIds: (sharedEdit.items || []).map(i => i.id),
+                    upsertItems: sharedEdit.items || []
+                })
+            }
+        );
+        sharedEdit.name = data.name || name;
+        sharedEdit.items = data.items || sharedEdit.items;
+        toast('Подборка сохранена');
+        renderSharedEditModal();
+        renderSharedWithMe();
+        renderCollections();
+    } catch (e) {
+        toast(e.message || 'Ошибка сохранения');
+    }
+}
+
 async function openSharedCollection(ownerId, collectionId, name) {
     try {
         const data = await Storage.api(`/api/shared-collection/${ownerId}/${collectionId}`);
-        // show in modal as read-only grid
+        sharedEdit = {
+            ownerId: data.ownerId || ownerId,
+            collectionId: data.collectionId || collectionId,
+            name: data.name || name || 'Подборка',
+            items: data.items || []
+        };
         const modal = document.getElementById('modal');
-        const body = document.getElementById('modal-body');
-        const itemsList = data.items || [];
-        body.innerHTML = `
-            <h2>${data.name || name || 'Подборка'}</h2>
-            <p class="hint">Общая закрытая подборка · ${data.ownerName || ''}</p>
-            <div class="content-grid" style="margin-top:16px">
-                ${itemsList.length ? itemsList.map(item => `
-                    <div class="card" style="cursor:default">
-                        <div class="card-poster">
-                            ${item.poster ? `<img src="${item.poster}" alt="" loading="lazy">` : '🎬'}
-                        </div>
-                        <div class="card-body">
-                            <div class="card-title">${item.title || ''}</div>
-                            <div class="card-meta">${item.year || '—'} · ${item.type === 'series' ? 'Сериал' : 'Фильм'}</div>
-                        </div>
-                    </div>
-                `).join('') : '<p class="hint">Пусто</p>'}
-            </div>`;
+        renderSharedEditModal();
         modal.classList.add('open');
     } catch (e) {
         toast(e.message || 'Нет доступа');
@@ -1658,6 +1750,8 @@ async function openSharedCollection(ownerId, collectionId, name) {
 window.openShareUserModal = openShareUserModal;
 window.removeShareUser = removeShareUser;
 window.openSharedCollection = openSharedCollection;
+window.sharedEditRemove = sharedEditRemove;
+window.sharedEditAdd = sharedEditAdd;
 
 
 function toggleCollectionPublic(colId) {

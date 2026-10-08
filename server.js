@@ -471,10 +471,75 @@ async function handle(req, res) {
       return send(res, 200, {
         name: colSc.name,
         ownerName: ownerSc ? ownerSc.name : '',
+        ownerId: ownerId,
+        collectionId: colSc.id,
+        canEdit: true,
         items: listSc
       });
     }
 
+    // Редактирование общей подборки (владелец или участник sharedWith)
+    if (p.indexOf('/api/shared-collection/') === 0 && req.method === 'PUT') {
+      var authEd = getAuthUser(req);
+      if (!authEd) return send(res, 401, { error: 'Не авторизован' });
+      var partsEd = p.split('/');
+      var ownerIdEd = partsEd[3];
+      var colIdEd = partsEd[4];
+      if (!ownerIdEd || !colIdEd) return send(res, 400, { error: 'Некорректный запрос' });
+      var bodyEd = await parseBody(req);
+      var prevColsEd = readJSON(userFile(ownerIdEd, 'collections'), []);
+      var colsEd = prevColsEd.slice();
+      var colEd = colsEd.find(function (c) { return c.id === colIdEd; });
+      if (!colEd) return send(res, 404, { error: 'Подборка не найдена' });
+      var canEdit = ownerIdEd === authEd.id ||
+        (colEd.sharedWith || []).some(function (m) { return m && m.userId === authEd.id; });
+      if (!canEdit) return send(res, 403, { error: 'Нет прав на редактирование' });
+
+      if (bodyEd.name && String(bodyEd.name).trim()) {
+        colEd.name = String(bodyEd.name).trim();
+      }
+
+      var ownerItems = readJSON(userFile(ownerIdEd, 'items'), []);
+      // upsertItems — добавить фильмы в библиотеку владельца (для участников)
+      if (Array.isArray(bodyEd.upsertItems)) {
+        bodyEd.upsertItems.forEach(function (it) {
+          if (!it || !it.id) return;
+          var exists = ownerItems.findIndex(function (x) { return x.id === it.id; });
+          if (exists >= 0) {
+            // оставляем как есть или мягко обновляем постер/название
+            if (it.title) ownerItems[exists].title = it.title;
+            if (it.poster) ownerItems[exists].poster = it.poster;
+          } else {
+            ownerItems.push(it);
+          }
+        });
+        writeJSON(userFile(ownerIdEd, 'items'), ownerItems);
+      }
+
+      if (Array.isArray(bodyEd.itemIds)) {
+        // только id, которые есть у владельца
+        var validIds = {};
+        ownerItems.forEach(function (it) { validIds[it.id] = true; });
+        colEd.itemIds = bodyEd.itemIds.filter(function (id) { return validIds[id]; });
+      }
+
+      colEd.updatedAt = new Date().toISOString();
+      writeJSON(userFile(ownerIdEd, 'collections'), colsEd);
+      updateSharesForUser(ownerIdEd, colsEd);
+      rebuildSharedInboxFromOwner(ownerIdEd, colsEd, prevColsEd);
+
+      var listEd = (colEd.itemIds || []).map(function (id) {
+        return ownerItems.find(function (i) { return i.id === id; });
+      }).filter(Boolean);
+
+      return send(res, 200, {
+        ok: true,
+        name: colEd.name,
+        ownerId: ownerIdEd,
+        collectionId: colEd.id,
+        items: listEd
+      });
+    }
 
     if (p === '/api/items' && req.method === 'GET') {
       var auth3 = getAuthUser(req);
