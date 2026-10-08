@@ -152,6 +152,7 @@
                     <h1>Моя видеотека</h1>
                     <div class="search-box">
                         <input type="text" id="search-input" placeholder="Поиск по названию и жанрам (а также режиссёру, тегам)...">
+                        <button type="button" class="search-clear" id="search-clear" title="Очистить" aria-label="Очистить поиск" hidden>×</button>
                     </div>
                 </header>
 
@@ -198,6 +199,7 @@
                 <div id="collection-view-bar" class="bulk-bar" style="display:none;">
                     <button id="back-to-collections" class="btn-secondary">← К подборкам</button>
                     <span id="collection-view-title" style="font-weight:600"></span>
+                    <button id="bulk-remove-from-collection" class="btn-secondary" style="display:none">Убрать из подборки</button>
                 </div>
 
                 <div id="bulk-bar" class="bulk-bar" style="display:none;">
@@ -223,7 +225,10 @@
 
                 <div id="tab-search" class="tab-content active">
                     <div class="search-external">
-                        <input type="text" id="ext-search" placeholder="Введите название фильма/сериала...">
+                        <div class="search-box" style="flex:1">
+                            <input type="text" id="ext-search" placeholder="Введите название фильма/сериала...">
+                            <button type="button" class="search-clear" id="ext-search-clear" title="Очистить" aria-label="Очистить поиск" hidden>×</button>
+                        </div>
                         <button id="ext-search-btn" class="btn-primary">Найти</button>
                     </div>
                     <p id="api-hint" class="hint">Сначала ищем в Кинопоиске, если ничего нет — в TMDB. Повторы скрываются.</p>

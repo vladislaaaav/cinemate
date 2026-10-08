@@ -620,6 +620,10 @@ function toggleSelect(id) {
 function updateBulkBar() {
     const bar = document.getElementById('bulk-bar');
     const count = selectedIds.size;
+    const rmCol = document.getElementById('bulk-remove-from-collection');
+    if (rmCol) {
+        rmCol.style.display = (viewingCollectionId && count > 0) ? 'inline-flex' : 'none';
+    }
     if (count > 0) {
         bar.style.display = 'flex';
         document.getElementById('selected-count').textContent = `${count} выбрано`;
@@ -642,7 +646,22 @@ document.getElementById('bulk-add-collection').addEventListener('click', () => {
 
 document.getElementById('bulk-delete').addEventListener('click', () => {
     if (selectedIds.size === 0) return;
-    if (!confirm(`Удалить ${selectedIds.size} элементов?`)) return;
+    // В режиме просмотра подборки — только убрать из подборки, не из библиотеки
+    if (viewingCollectionId) {
+        if (!confirm(`Убрать ${selectedIds.size} из этой подборки? (из библиотеки не удалятся)`)) return;
+        const col = collections.find(c => c.id === viewingCollectionId);
+        if (col) {
+            const ids = Array.from(selectedIds);
+            col.itemIds = col.itemIds.filter(id => !ids.includes(id));
+            Storage.saveCollections(collections);
+            selectedIds.clear();
+            updateBulkBar();
+            renderLibrary();
+            toast('Убрано из подборки (библиотека без изменений)');
+        }
+        return;
+    }
+    if (!confirm(`Удалить ${selectedIds.size} элементов из библиотеки?`)) return;
     
     const ids = Array.from(selectedIds);
     items = items.filter(i => !ids.includes(i.id));
@@ -654,8 +673,23 @@ document.getElementById('bulk-delete').addEventListener('click', () => {
     selectedIds.clear();
     updateBulkBar();
     renderLibrary();
-    toast(`Удалено: ${ids.length}`);
+    toast(`Удалено из библиотеки: ${ids.length}`);
 });
+
+document.getElementById('bulk-remove-from-collection')?.addEventListener('click', () => {
+    if (!viewingCollectionId || selectedIds.size === 0) return;
+    const col = collections.find(c => c.id === viewingCollectionId);
+    if (!col) return;
+    if (!confirm(`Убрать ${selectedIds.size} из подборки? Фильмы останутся в библиотеке.`)) return;
+    const ids = Array.from(selectedIds);
+    col.itemIds = col.itemIds.filter(id => !ids.includes(id));
+    Storage.saveCollections(collections);
+    selectedIds.clear();
+    updateBulkBar();
+    renderLibrary();
+    toast('Убрано из подборки');
+});
+
 
 // Filters listeners
 ['search-input', 'filter-status', 'filter-type', 'filter-genre', 'filter-source', 'filter-rating', 'sort-by'].forEach(id => {
@@ -676,6 +710,28 @@ document.getElementById('clear-filters').addEventListener('click', () => {
     document.getElementById('sort-by').value = 'date-desc';
     renderLibrary();
 });
+
+// Clear search buttons (×)
+function wireSearchClear(inputId, btnId, onClear) {
+    const input = document.getElementById(inputId);
+    const btn = document.getElementById(btnId);
+    if (!input || !btn) return;
+    const sync = () => { btn.hidden = !input.value; };
+    input.addEventListener('input', () => { sync(); if (onClear && !input.value) onClear(); });
+    btn.addEventListener('click', () => {
+        input.value = '';
+        sync();
+        input.focus();
+        if (onClear) onClear();
+    });
+    sync();
+}
+wireSearchClear('search-input', 'search-clear', () => renderLibrary());
+wireSearchClear('ext-search', 'ext-search-clear', () => {
+    const box = document.getElementById('ext-results');
+    if (box) box.innerHTML = '';
+});
+
 
 // ===== Manual Add =====
 // Poster helper (resize + base64)
@@ -1622,6 +1678,7 @@ async function renderSharedWithMe() {
                 <div class="count">${s.itemCount || 0} элементов · от ${s.ownerName || s.ownerEmail || 'пользователя'}</div>
                 <div class="collection-actions">
                     <button class="btn-primary" onclick="openSharedCollection('${s.ownerId}','${s.collectionId}','${safeName}')">Открыть / править</button>
+                    <button class="btn-secondary" onclick="leaveSharedCollection('${s.ownerId}','${s.collectionId}')">Выйти из подборки</button>
                 </div>
             </div>`;
         }).join('');
@@ -1691,8 +1748,11 @@ function renderSharedEditModal() {
 }
 
 function sharedEditRemove(itemId) {
+    // Только из подборки — библиотека владельца и ваша не трогаются до «Сохранить»,
+    // а при сохранении с сервера удаляется лишь id из itemIds подборки.
     sharedEdit.items = (sharedEdit.items || []).filter(i => i.id !== itemId);
     renderSharedEditModal();
+    toast('Убрано из подборки (сохраните изменения)');
 }
 
 function sharedEditAdd(itemId) {
@@ -1749,6 +1809,21 @@ async function openSharedCollection(ownerId, collectionId, name) {
 
 window.openShareUserModal = openShareUserModal;
 window.removeShareUser = removeShareUser;
+async function leaveSharedCollection(ownerId, collectionId) {
+    if (!confirm('Выйти из этой подборки? Вы больше не будете видеть её в «Доступные мне».')) return;
+    try {
+        await Storage.api('/api/collections/leave', {
+            method: 'POST',
+            body: JSON.stringify({ ownerId, collectionId })
+        });
+        toast('Вы вышли из подборки');
+        renderSharedWithMe();
+    } catch (e) {
+        toast(e.message || 'Не удалось выйти');
+    }
+}
+
+window.leaveSharedCollection = leaveSharedCollection;
 window.openSharedCollection = openSharedCollection;
 window.sharedEditRemove = sharedEditRemove;
 window.sharedEditAdd = sharedEditAdd;
@@ -1831,6 +1906,7 @@ function addToCollection(itemId, colId) {
 function removeFromCollection(colId, itemId) {
     const col = collections.find(c => c.id === colId);
     if (!col) return;
+    // Только из подборки — элемент остаётся в библиотеке
     col.itemIds = col.itemIds.filter(id => id !== itemId);
     Storage.saveCollections(collections);
     renderCollections();

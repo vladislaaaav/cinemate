@@ -412,6 +412,30 @@ async function handle(req, res) {
       return send(res, 200, { ok: true, collection: colSh });
     }
 
+    // Выйти из общей подборки (участник сам отказывается от доступа)
+    if (p === '/api/collections/leave' && req.method === 'POST') {
+      var authLv = getAuthUser(req);
+      if (!authLv) return send(res, 401, { error: 'Не авторизован' });
+      var bodyLv = await parseBody(req);
+      var ownerIdLv = bodyLv.ownerId;
+      var colIdLv = bodyLv.collectionId;
+      if (!ownerIdLv || !colIdLv) return send(res, 400, { error: 'Некорректный запрос' });
+      var prevLv = readJSON(userFile(ownerIdLv, 'collections'), []);
+      var colsLv = prevLv.slice();
+      var colLv = colsLv.find(function (c) { return c.id === colIdLv; });
+      if (!colLv) return send(res, 404, { error: 'Подборка не найдена' });
+      var before = (colLv.sharedWith || []).length;
+      colLv.sharedWith = (colLv.sharedWith || []).filter(function (m) { return m.userId !== authLv.id; });
+      if (colLv.sharedWith.length === before) {
+        return send(res, 400, { error: 'Вы не в списке участников этой подборки' });
+      }
+      colLv.updatedAt = new Date().toISOString();
+      writeJSON(userFile(ownerIdLv, 'collections'), colsLv);
+      updateSharesForUser(ownerIdLv, colsLv);
+      rebuildSharedInboxFromOwner(ownerIdLv, colsLv, prevLv);
+      return send(res, 200, { ok: true, message: 'Вы вышли из подборки' });
+    }
+
     // Забрать доступ
     if (p === '/api/collections/share' && req.method === 'DELETE') {
       var authUn = getAuthUser(req);

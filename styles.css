@@ -1519,3 +1519,43 @@ select {
     padding: 4px 10px;
     font-size: 12px;
 }
+
+
+/* Search clear button */
+.search-box {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+.search-box input {
+    width: 100%;
+    padding-right: 40px;
+}
+.search-clear {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 32px;
+    height: 32px;
+    border: none;
+    border-radius: 8px;
+    background: var(--bg-hover);
+    color: var(--text-muted);
+    font-size: 20px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2;
+}
+.search-clear:hover {
+    color: var(--text);
+    background: var(--border);
+}
+.search-external {
+    display: flex;
+    gap: 10px;
+    align-items: stretch;
+}
