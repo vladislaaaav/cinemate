@@ -22,6 +22,7 @@ const DATA_DIR = process.env.DATA_DIR
 
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+const SHARES_FILE = path.join(DATA_DIR, 'shares.json');
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -62,6 +63,24 @@ function getUsers() { return readJSON(USERS_FILE, []); }
 function saveUsers(u) { writeJSON(USERS_FILE, u); }
 function getSessions() { return readJSON(SESSIONS_FILE, {}); }
 function saveSessions(s) { writeJSON(SESSIONS_FILE, s); }
+
+function getShares() { return readJSON(SHARES_FILE, {}); }
+function saveShares(s) { writeJSON(SHARES_FILE, s); }
+
+/** Обновить индекс публичных ссылок для пользователя */
+function updateSharesForUser(userId, cols) {
+  var shares = getShares();
+  Object.keys(shares).forEach(function (sid) {
+    if (shares[sid] && shares[sid].userId === userId) delete shares[sid];
+  });
+  (cols || []).forEach(function (col) {
+    if (col && col.isPublic && col.shareId) {
+      shares[col.shareId] = { userId: userId, collectionId: col.id, name: col.name || '' };
+    }
+  });
+  saveShares(shares);
+}
+
 
 function hashPassword(password, salt) {
   salt = salt || crypto.randomBytes(16).toString('hex');
@@ -268,10 +287,114 @@ async function handle(req, res) {
       var body5 = await parseBody(req);
       if (!Array.isArray(body5)) return send(res, 400, { error: 'Ожидается массив' });
       writeJSON(userFile(auth6.id, 'collections'), body5);
+      updateSharesForUser(auth6.id, body5);
       return send(res, 200, { ok: true });
     }
 
-    // Статика (фронтенд)
+    // Публичная подборка по ссылке (без авторизации)
+    if (p.indexOf('/api/public/collection/') === 0 && req.method === 'GET') {
+      var shareId = p.split('/').pop();
+      if (!shareId || shareId.length < 6) return send(res, 400, { error: 'Некорректная ссылка' });
+      var shares = getShares();
+      var meta = shares[shareId];
+      if (!meta) return send(res, 404, { error: 'Подборка не найдена или закрыта' });
+      var cols = readJSON(userFile(meta.userId, 'collections'), []);
+      var col = cols.find(function (c) { return c.id === meta.collectionId; });
+      if (!col || !col.isPublic || col.shareId !== shareId) {
+        return send(res, 404, { error: 'Подборка не найдена или закрыта' });
+      }
+      var allItems = readJSON(userFile(meta.userId, 'items'), []);
+      var pubItems = (col.itemIds || []).map(function (id) {
+        return allItems.find(function (i) { return i.id === id; });
+      }).filter(Boolean).map(function (i) {
+        return {
+          id: i.id,
+          title: i.title,
+          originalTitle: i.originalTitle,
+          type: i.type,
+          year: i.year,
+          genres: i.genres,
+          overview: i.overview,
+          poster: i.poster,
+          rating: i.rating,
+          dataSource: i.dataSource,
+          kinopoiskId: i.kinopoiskId,
+          tmdbId: i.tmdbId,
+          kpRating: i.kpRating
+        };
+      });
+      return send(res, 200, {
+        name: col.name,
+        shareId: col.shareId,
+        itemCount: pubItems.length,
+        items: pubItems
+      });
+    }
+
+
+    // ----- Kinopoisk proxy (ключ только на сервере) -----
+    if (p === '/api/kp/search' && req.method === 'GET') {
+      var kpKey = process.env.KP_API_KEY || process.env.KINOPOISK_API_KEY || '';
+      if (!kpKey || kpKey === 'ВАШ_КЛЮЧ_КИНОПОИСК') {
+        return send(res, 401, { error: 'Ключ Кинопоиска не задан на сервере. Укажите переменную окружения KP_API_KEY на Render (или в .env).' });
+      }
+      var keyword = url.searchParams.get('keyword') || '';
+      var page = url.searchParams.get('page') || '1';
+      if (!keyword.trim()) return send(res, 400, { error: 'Пустой запрос' });
+      try {
+        var kpUrl = 'https://kinopoiskapiunofficial.tech/api/v2.1/films/search-by-keyword?keyword=' +
+          encodeURIComponent(keyword) + '&page=' + encodeURIComponent(page);
+        var kpRes = await fetch(kpUrl, {
+          headers: { 'X-API-KEY': kpKey.trim(), 'Accept': 'application/json' }
+        });
+        var text = await kpRes.text();
+        var body;
+        try { body = JSON.parse(text); } catch (_) { body = { raw: text }; }
+        if (!kpRes.ok) {
+          var msg = (body && body.message) || text || ('HTTP ' + kpRes.status);
+          if (kpRes.status === 401) msg = 'Неверный API-ключ Кинопоиска (401). Проверьте KP_API_KEY на сервере.';
+          return send(res, kpRes.status, { error: msg, status: kpRes.status });
+        }
+        return send(res, 200, body);
+      } catch (e) {
+        console.error('[kp]', e);
+        return send(res, 502, { error: 'Не удалось связаться с API Кинопоиска: ' + e.message });
+      }
+    }
+
+    if (p.indexOf('/api/kp/film/') === 0 && req.method === 'GET') {
+      var kpKey2 = process.env.KP_API_KEY || process.env.KINOPOISK_API_KEY || '';
+      if (!kpKey2 || kpKey2 === 'ВАШ_КЛЮЧ_КИНОПОИСК') {
+        return send(res, 401, { error: 'Ключ Кинопоиска не задан на сервере (KP_API_KEY).' });
+      }
+      var parts = p.split('/'); // ['', 'api', 'kp', 'film', id, optional]
+      var filmId = parts[4];
+      var sub = parts[5] || ''; // seasons | staff | ''
+      if (!filmId || !/^\d+$/.test(filmId)) return send(res, 400, { error: 'Некорректный id фильма' });
+      var pathKp = 'https://kinopoiskapiunofficial.tech/api/v2.2/films/' + filmId;
+      if (sub === 'seasons') pathKp += '/seasons';
+      else if (sub === 'staff') pathKp = 'https://kinopoiskapiunofficial.tech/api/v1/staff?filmId=' + filmId;
+      try {
+        var kpRes2 = await fetch(pathKp, {
+          headers: { 'X-API-KEY': kpKey2.trim(), 'Accept': 'application/json' }
+        });
+        var text2 = await kpRes2.text();
+        var body2;
+        try { body2 = JSON.parse(text2); } catch (_) { body2 = { raw: text2 }; }
+        if (!kpRes2.ok) {
+          var msg2 = (body2 && body2.message) || ('HTTP ' + kpRes2.status);
+          if (kpRes2.status === 401) msg2 = 'Неверный API-ключ Кинопоиска (401).';
+          return send(res, kpRes2.status, { error: msg2 });
+        }
+        return send(res, 200, body2);
+      } catch (e2) {
+        console.error('[kp]', e2);
+        return send(res, 502, { error: e2.message });
+      }
+    }
+
+
+        // Статика (фронтенд)
     var rel = p === '/' ? 'index.html' : p;
     var filePath = path.normalize(path.join(__dirname, rel));
     if (!filePath.startsWith(__dirname)) return send(res, 403, { error: 'Forbidden' });

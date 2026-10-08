@@ -1,0 +1,58 @@
+[
+  {
+    "id": "kp_7277453_1791445289188",
+    "title": "Lesbian Space Princess",
+    "originalTitle": "Lesbian Space Princess",
+    "type": "movie",
+    "year": "2024",
+    "genres": [
+      "комедия",
+      "мелодрама",
+      "мультфильм",
+      "фантастика",
+      "фэнтези"
+    ],
+    "director": "",
+    "overview": "",
+    "status": "planned",
+    "source": "streaming",
+    "rating": 0,
+    "tags": [],
+    "review": "",
+    "seasons": null,
+    "episodes": null,
+    "watchedEpisodes": 0,
+    "poster": "https://kinopoiskapiunofficial.tech/images/posters/kp/no-poster.png",
+    "addedAt": "2026-10-08T07:41:29.188Z",
+    "tmdbId": null,
+    "kinopoiskId": 7277453,
+    "dataSource": "kinopoisk",
+    "kpRating": "4.4"
+  },
+  {
+    "id": "tmdb_34869_1791444147271",
+    "title": "Груз 200",
+    "originalTitle": "Груз 200",
+    "type": "movie",
+    "year": "2007",
+    "genres": [
+      "криминал",
+      "драма",
+      "триллер"
+    ],
+    "director": "Алексей Балабанов",
+    "overview": "СССР. 1984 год. Финал советской эпохи. Провинция. После дискотеки пропадает дочь секретаря райкома партии. Свидетелей нет. Виновные не обнаружены. В этот же вечер в доме на окраине города происходит жестокое убийство. Виновный — хозяин дома. Оба расследования поручены капитану милиции Журову…",
+    "status": "planned",
+    "source": "streaming",
+    "rating": 0,
+    "tags": [],
+    "review": "",
+    "seasons": null,
+    "episodes": null,
+    "watchedEpisodes": 0,
+    "poster": "https://image.tmdb.org/t/p/w500/xOMHr6AjDF96wKRWpadRDTjjh7A.jpg",
+    "addedAt": "2026-10-08T07:22:27.271Z",
+    "tmdbId": 34869,
+    "kinopoiskId": null
+  }
+]

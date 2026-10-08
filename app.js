@@ -1,9 +1,25 @@
 // ====================== Cinemate App ======================
 // Полностью соответствует ТЗ + тёмная/светлая тема + экспорт/импорт + прогресс сезонов/эпизодов
 
-const TMDB_API_KEY = 'd7da4a53fdf93ec21961e71d845be2e7'; // Получите бесплатно: https://www.themoviedb.org/settings/api
+// ===== Внешние API (ключи в api-keys.js) =====
+const _keys = (typeof window !== 'undefined' && window.CINEMATE_KEYS) ? window.CINEMATE_KEYS : {};
+const KP_API_KEY = _keys.kinopoisk || '';
+const KP_BASE = 'https://kinopoiskapiunofficial.tech';
+const TMDB_API_KEY = _keys.tmdb || '';
 const TMDB_BASE = 'https://api.themoviedb.org/3';
 const TMDB_IMG = 'https://image.tmdb.org/t/p/w500';
+
+const KP_KEY_PLACEHOLDER = 'ВАШ_КЛЮЧ_КИНОПОИСК';
+const TMDB_KEY_PLACEHOLDER = 'ВАШ_КЛЮЧ_TMDB';
+
+function hasKpKey() {
+    return KP_API_KEY && KP_API_KEY !== KP_KEY_PLACEHOLDER;
+}
+function hasTmdbKey() {
+    return TMDB_API_KEY && TMDB_API_KEY !== TMDB_KEY_PLACEHOLDER;
+}
+
+let currentApiSource = 'kinopoisk'; // kinopoisk | tmdb
 
 // ===== API + Storage (server-side accounts) =====
 // URL API: из config.js, либо тот же origin, либо localhost при file://
@@ -510,6 +526,7 @@ function renderLibrary() {
             <div onclick="openDetail('${item.id}')">
                 <div class="card-poster">
                     ${item.poster ? `<img src="${item.poster}" alt="${item.title}" loading="lazy">` : '🎬'}
+                    <span class="source-badge ${sourceBadgeClass(item)}">${sourceLabel(item)}</span>
                 </div>
                 <div class="card-body">
                     <div class="card-title">${item.title}</div>
@@ -669,7 +686,9 @@ document.getElementById('manual-form').addEventListener('submit', async e => {
         watchedEpisodes: type === 'series' ? watchedEpisodes : 0,
         poster: poster,
         addedAt: new Date().toISOString(),
-        tmdbId: null
+        tmdbId: null,
+        kinopoiskId: null,
+        dataSource: 'manual'
     };
 
     if (type === 'series' && totalEpisodes > 0) {
@@ -695,38 +714,408 @@ document.getElementById('manual-form').addEventListener('submit', async e => {
     document.querySelector('[data-page="library"]').click();
 });
 
-// ===== TMDB Search =====
-document.getElementById('tmdb-search-btn').addEventListener('click', searchTMDB);
-document.getElementById('tmdb-search').addEventListener('keydown', e => {
-    if (e.key === 'Enter') searchTMDB();
+// ===== External Search (Kinopoisk first, then TMDB) =====
+function sourceLabel(item) {
+    if (item.dataSource === 'kinopoisk' || item.kinopoiskId) return 'Кинопоиск';
+    if (item.dataSource === 'tmdb' || item.tmdbId) return 'TMDB';
+    return 'Вручную';
+}
+function sourceBadgeClass(item) {
+    if (item.dataSource === 'kinopoisk' || item.kinopoiskId) return 'kp';
+    if (item.dataSource === 'tmdb' || item.tmdbId) return 'tmdb';
+    return 'manual';
+}
+
+function normTitle(s) {
+    return (s || '').toLowerCase().replace(/[«»"'.:,!?—–-]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function resultKey(title, year) {
+    return normTitle(title) + '|' + String(year || '').slice(0, 4);
+}
+
+function updateApiHint() {
+    const hint = document.getElementById('api-hint');
+    if (!hint) return;
+    hint.innerHTML = 'Приоритет: <b>Кинопоиск</b>, если пусто — TMDB. Дубликаты не показываются.';
+}
+
+document.getElementById('ext-search-btn')?.addEventListener('click', searchExternal);
+document.getElementById('ext-search')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') searchExternal();
+});
+document.getElementById('tmdb-search-btn')?.addEventListener('click', searchExternal);
+document.getElementById('tmdb-search')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') searchExternal();
 });
 
-async function searchTMDB() {
-    const query = document.getElementById('tmdb-search').value.trim();
-    if (!query) return;
+updateApiHint();
 
-    const resultsDiv = document.getElementById('tmdb-results');
-    resultsDiv.innerHTML = '<p style="color:var(--text-muted)">Ищем...</p>';
-
-    if (TMDB_API_KEY === 'ВАШ_КЛЮЧ_TMDB') {
-        resultsDiv.innerHTML = `
-            <div style="grid-column:1/-1; padding:20px; background:var(--bg-card); border-radius:12px; border:1px solid var(--border);">
-                <p><strong>Для полноценной работы вставьте свой API-ключ TMDB</strong> в начале файла <code>app.js</code>.</p>
-                <p style="margin-top:12px; color:var(--text-muted)">Получить бесплатно: <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--primary)">themoviedb.org/settings/api</a></p>
-                <p style="margin-top:16px">Пока можете добавить контент вручную на вкладке «Ручное добавление».</p>
-            </div>`;
+function renderSearchCards(list, resultsDiv) {
+    if (!list.length) {
+        resultsDiv.innerHTML = '<p>Ничего не найдено ни в Кинопоиске, ни в TMDB</p>';
         return;
     }
+    resultsDiv.innerHTML = list.map(entry => {
+        const { source, raw, title, year, poster, typeLabel: tl, rating } = entry;
+        const badge = source === 'kinopoisk'
+            ? '<span class="source-badge kp">Кинопоиск</span>'
+            : '<span class="source-badge tmdb">TMDB</span>';
+        const rawStr = JSON.stringify(raw).replace(/</g, '\\u003c').replace(/'/g, '&#39;');
+        const addFn = source === 'kinopoisk' ? 'addFromKP' : 'addFromTMDB';
+        const colFn = source === 'kinopoisk' ? 'addFromKPToCollection' : 'addFromTMDBToCollection';
+        return `
+            <div class="tmdb-card">
+                ${badge}
+                <div onclick='${addFn}(${rawStr})' style="cursor:pointer">
+                    ${poster ? `<img src="${poster}" alt="" loading="lazy">` : '<div class="tmdb-no-poster">🎬</div>'}
+                    <div class="tmdb-card-info">
+                        <strong>${title}</strong>
+                        <span>${year || ''} · ${tl} ${rating || ''}</span>
+                    </div>
+                </div>
+                <div style="display:flex;gap:6px;padding:0 8px 8px">
+                    <button class="btn-primary" style="flex:1;padding:6px;font-size:12px" onclick='${addFn}(${rawStr})'>В библиотеку</button>
+                    <button class="btn-secondary" style="padding:6px 10px;font-size:12px" onclick='${colFn}(${rawStr})' title="В подборку">📁</button>
+                </div>
+            </div>`;
+    }).join('');
+}
 
+async function fetchKpFilms(query) {
+    try {
+        const res = await fetch(`${API_BASE}/api/kp/search?keyword=${encodeURIComponent(query)}&page=1`);
+        let data = await res.json().catch(() => ({}));
+        if (res.status === 401 && hasKpKey()) {
+            data = await searchKinopoiskDirect(query);
+        } else if (!res.ok) {
+            if (hasKpKey()) data = await searchKinopoiskDirect(query);
+            else return { films: [], error: data.error || 'KP error' };
+        }
+        return { films: data.films || [], error: null };
+    } catch (e) {
+        if (hasKpKey()) {
+            try {
+                const data = await searchKinopoiskDirect(query);
+                return { films: data.films || [], error: null };
+            } catch (e2) {
+                return { films: [], error: e2.message };
+            }
+        }
+        return { films: [], error: e.message };
+    }
+}
+
+async function fetchTmdbFilms(query) {
+    if (!hasTmdbKey()) return { results: [], error: 'no key' };
     try {
         const res = await fetch(`${TMDB_BASE}/search/multi?api_key=${TMDB_API_KEY}&language=ru-RU&query=${encodeURIComponent(query)}`);
         const data = await res.json();
+        if (!res.ok) return { results: [], error: data.status_message || 'TMDB error' };
+        return {
+            results: (data.results || []).filter(r => r.media_type === 'movie' || r.media_type === 'tv'),
+            error: null
+        };
+    } catch (e) {
+        return { results: [], error: e.message };
+    }
+}
 
-        if (!data.results || data.results.length === 0) {
-            resultsDiv.innerHTML = '<p>Ничего не найдено</p>';
+async function searchExternal() {
+    const input = document.getElementById('ext-search') || document.getElementById('tmdb-search');
+    const resultsDiv = document.getElementById('ext-results') || document.getElementById('tmdb-results');
+    const query = (input?.value || '').trim();
+    if (!query || !resultsDiv) return;
+
+    resultsDiv.innerHTML = '<p style="color:var(--text-muted)">Ищем в Кинопоиске...</p>';
+
+    const seen = new Set();
+    const list = [];
+
+    // 1) Kinopoisk first
+    const kp = await fetchKpFilms(query);
+    for (const f of (kp.films || []).slice(0, 20)) {
+        const title = f.nameRu || f.nameEn || f.nameOriginal || 'Без названия';
+        const year = String(f.year || '').slice(0, 4);
+        const key = resultKey(title, year);
+        if (seen.has(key)) continue;
+        // skip if already in library
+        if (items.some(i =>
+            (f.filmId && i.kinopoiskId && String(i.kinopoiskId) === String(f.filmId)) ||
+            (normTitle(i.title) === normTitle(title) && String(i.year || '') === year)
+        )) continue;
+        seen.add(key);
+        const typeLabel = (f.type === 'TV_SERIES' || f.type === 'MINI_SERIES' || f.type === 'TV_SHOW') ? 'Сериал' : 'Фильм';
+        const rating = f.rating && f.rating !== 'null' ? `★ ${f.rating}` : '';
+        list.push({
+            source: 'kinopoisk',
+            raw: f,
+            title,
+            year,
+            poster: f.posterUrlPreview || f.posterUrl || null,
+            typeLabel,
+            rating
+        });
+    }
+
+    // 2) TMDB only if KP empty (priority Kinopoisk)
+    if (list.length === 0) {
+        resultsDiv.innerHTML = '<p style="color:var(--text-muted)">В Кинопоиске пусто, ищем в TMDB...</p>';
+        const tm = await fetchTmdbFilms(query);
+        for (const r of (tm.results || []).slice(0, 12)) {
+            const title = r.title || r.name || 'Без названия';
+            const year = (r.release_date || r.first_air_date || '').slice(0, 4);
+            const key = resultKey(title, year);
+            if (seen.has(key)) continue;
+            if (items.some(i =>
+                (r.id && i.tmdbId && String(i.tmdbId) === String(r.id)) ||
+                (normTitle(i.title) === normTitle(title) && String(i.year || '') === year)
+            )) continue;
+            seen.add(key);
+            list.push({
+                source: 'tmdb',
+                raw: r,
+                title,
+                year,
+                poster: r.poster_path ? TMDB_IMG + r.poster_path : null,
+                typeLabel: r.media_type === 'tv' ? 'Сериал' : 'Фильм',
+                rating: r.vote_average ? `★ ${Number(r.vote_average).toFixed(1)}` : ''
+            });
+        }
+        if (list.length === 0 && kp.error && !hasKpKey() && !hasTmdbKey()) {
+            resultsDiv.innerHTML = `
+                <div style="grid-column:1/-1;padding:20px;background:var(--bg-card);border-radius:12px;border:1px solid var(--border)">
+                    <p><strong>Не заданы ключи API.</strong></p>
+                    <p style="margin-top:10px;color:var(--text-muted)">Кинопоиск: переменная <code>KP_API_KEY</code> на Render или <code>api-keys.js</code>. TMDB: ключ в <code>api-keys.js</code>.</p>
+                </div>`;
             return;
         }
+    }
 
+    renderSearchCards(list, resultsDiv);
+}
+
+async function searchKinopoisk(query, resultsDiv) {
+    try {
+        // Сначала пробуем прокси сервера (ключ на сервере: KP_API_KEY)
+        let data;
+        try {
+            const res = await fetch(`${API_BASE}/api/kp/search?keyword=${encodeURIComponent(query)}&page=1`);
+            data = await res.json().catch(() => ({}));
+            if (res.status === 401) {
+                // нет ключа на сервере — fallback на ключ из api-keys.js
+                if (!hasKpKey()) {
+                    resultsDiv.innerHTML = `
+                        <div style="grid-column:1/-1;padding:20px;background:var(--bg-card);border-radius:12px;border:1px solid var(--border)">
+                            <p><strong>Ошибка 401 — ключ Кинопоиска не принят.</strong></p>
+                            <p style="margin-top:12px">Сделайте одно из двух:</p>
+                            <ol style="margin:12px 0 0 20px;color:var(--text-muted);line-height:1.6">
+                                <li><b>На Render:</b> Environment → добавьте <code>KP_API_KEY</code> = ваш токен с <a href="https://kinopoiskapiunofficial.tech" target="_blank" style="color:var(--primary)">kinopoiskapiunofficial.tech</a>, затем Redeploy.</li>
+                                <li><b>Локально:</b> впишите токен в <code>api-keys.js</code> → <code>kinopoisk</code>.</li>
+                            </ol>
+                            <p style="margin-top:12px;color:var(--text-muted)">${data.error || ''}</p>
+                        </div>`;
+                    return;
+                }
+                data = await searchKinopoiskDirect(query);
+            } else if (!res.ok) {
+                throw new Error(data.error || ('HTTP ' + res.status));
+            }
+        } catch (proxyErr) {
+            // сервер недоступен — прямой запрос с клиентским ключом
+            if (!hasKpKey()) throw proxyErr;
+            data = await searchKinopoiskDirect(query);
+        }
+
+        const films = data.films || [];
+        if (!films.length) {
+            resultsDiv.innerHTML = '<p>Ничего не найдено в Кинопоиске</p>';
+            return;
+        }
+        resultsDiv.innerHTML = films.slice(0, 12).map(f => {
+            const title = f.nameRu || f.nameEn || f.nameOriginal || 'Без названия';
+            const year = f.year || '';
+            const poster = f.posterUrlPreview || f.posterUrl || null;
+            const typeLabel = (f.type === 'TV_SERIES' || f.type === 'MINI_SERIES' || f.type === 'TV_SHOW') ? 'Сериал' : 'Фильм';
+            const rating = f.rating && f.rating !== 'null' ? `★ ${f.rating}` : '';
+            const rawStr = JSON.stringify(f).replace(/</g, '\\u003c').replace(/'/g, '&#39;');
+            return `
+                <div class="tmdb-card">
+                    <div onclick='addFromKP(${rawStr})' style="cursor:pointer">
+                        ${poster ? `<img src="${poster}" alt="" loading="lazy">` : '<div class="tmdb-no-poster">🎬</div>'}
+                        <div class="tmdb-card-info">
+                            <strong>${title}</strong>
+                            <span>${year} · ${typeLabel} ${rating}</span>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:6px;padding:0 8px 8px">
+                        <button class="btn-primary" style="flex:1;padding:6px;font-size:12px" onclick='addFromKP(${rawStr})'>В библиотеку</button>
+                        <button class="btn-secondary" style="padding:6px 10px;font-size:12px" onclick='addFromKPToCollection(${rawStr})' title="В подборку">📁</button>
+                    </div>
+                </div>`;
+        }).join('');
+    } catch (e) {
+        console.error(e);
+        resultsDiv.innerHTML = `<p style="color:var(--danger)">Ошибка Кинопоиска: ${e.message}</p>`;
+    }
+}
+
+async function searchKinopoiskDirect(query) {
+    const key = (KP_API_KEY || '').trim();
+    const res = await fetch(
+        `${KP_BASE}/api/v2.1/films/search-by-keyword?keyword=${encodeURIComponent(query)}&page=1`,
+        { headers: { 'X-API-KEY': key, 'Accept': 'application/json' } }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+        if (res.status === 401) {
+            throw new Error('401: неверный ключ в api-keys.js. Скопируйте токен ещё раз с kinopoiskapiunofficial.tech (без пробелов и кавычек).');
+        }
+        throw new Error(data.message || data.error || ('HTTP ' + res.status));
+    }
+    return data;
+}
+
+async function kpFetchFilm(id, sub) {
+    const path = sub ? `/api/kp/film/${id}/${sub}` : `/api/kp/film/${id}`;
+    try {
+        const res = await fetch(API_BASE + path);
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) return data;
+        if (res.status !== 401 || !hasKpKey()) {
+            if (!res.ok) return null;
+        }
+    } catch (_) {}
+    // fallback direct
+    if (!hasKpKey()) return null;
+    let url = `${KP_BASE}/api/v2.2/films/${id}`;
+    if (sub === 'seasons') url += '/seasons';
+    else if (sub === 'staff') url = `${KP_BASE}/api/v1/staff?filmId=${id}`;
+    const res2 = await fetch(url, { headers: { 'X-API-KEY': KP_API_KEY.trim(), 'Accept': 'application/json' } });
+    if (!res2.ok) return null;
+    return res2.json();
+}
+
+async function createItemFromKP(raw) {
+    let details = raw;
+    let seasonsCount = null;
+    let episodesTotal = null;
+    const kpId = raw.filmId || raw.kinopoiskId;
+
+    const full = await kpFetchFilm(kpId);
+    if (full) details = full;
+
+    const typeCode = details.type || raw.type || '';
+    const isSeries = ['TV_SERIES', 'MINI_SERIES', 'TV_SHOW'].includes(typeCode);
+
+    if (isSeries) {
+        const sData = await kpFetchFilm(details.kinopoiskId || kpId, 'seasons');
+        if (sData && sData.items) {
+            seasonsCount = sData.items.length || null;
+            episodesTotal = sData.items.reduce((sum, s) => sum + (s.episodes?.length || 0), 0) || null;
+        }
+    }
+
+    const genres = (details.genres || raw.genres || [])
+        .map(g => (typeof g === 'string' ? g : g.genre))
+        .filter(Boolean);
+
+    const title = details.nameRu || details.nameEn || details.nameOriginal || raw.nameRu || 'Без названия';
+    const originalTitle = details.nameOriginal || details.nameEn || raw.nameEn || '';
+    const year = details.year || raw.year || '';
+    const overview = details.description || raw.description || '';
+    const poster = details.posterUrl || details.posterUrlPreview || raw.posterUrl || raw.posterUrlPreview || null;
+    const id = details.kinopoiskId || kpId;
+
+    let director = '';
+    const staff = await kpFetchFilm(id, 'staff');
+    if (Array.isArray(staff)) {
+        const dir = staff.find(p => p.professionKey === 'DIRECTOR' || p.professionText === 'Режиссеры');
+        if (dir) director = dir.nameRu || dir.nameEn || '';
+    }
+
+    return {
+        id: 'kp_' + id + '_' + Date.now(),
+        title,
+        originalTitle,
+        type: isSeries ? 'series' : 'movie',
+        year: year ? String(year) : '',
+        genres,
+        director,
+        overview,
+        status: 'planned',
+        source: 'streaming',
+        rating: 0,
+        tags: [],
+        review: '',
+        seasons: seasonsCount,
+        episodes: episodesTotal,
+        watchedEpisodes: 0,
+        poster,
+        addedAt: new Date().toISOString(),
+        tmdbId: null,
+        kinopoiskId: id,
+        dataSource: 'kinopoisk',
+        kpRating: details.ratingKinopoisk || raw.rating || null
+    };
+}
+
+async function addFromKP(raw) {
+    try {
+        toast('Загрузка данных с Кинопоиска...');
+        const item = await createItemFromKP(raw);
+        if (isDuplicate(item)) {
+            toast(`«${item.title}» уже есть в библиотеке`);
+            return;
+        }
+        items.unshift(item);
+        Storage.saveItems(items);
+        toast(`«${item.title}» добавлен`);
+        document.querySelector('[data-page="library"]').click();
+    } catch (e) {
+        console.error(e);
+        toast('Не удалось добавить: ' + e.message);
+    }
+}
+
+async function addFromKPToCollection(raw) {
+    try {
+        const item = await createItemFromKP(raw);
+        if (isDuplicate(item)) {
+            const existing = items.find(i =>
+                (item.kinopoiskId && i.kinopoiskId && String(i.kinopoiskId) === String(item.kinopoiskId)) ||
+                ((i.title || '').toLowerCase() === (item.title || '').toLowerCase() && String(i.year || '') === String(item.year || ''))
+            );
+            if (existing) {
+                promptAddToCollection(existing.id);
+                return;
+            }
+        }
+        items.unshift(item);
+        Storage.saveItems(items);
+        promptAddToCollection(item.id);
+    } catch (e) {
+        toast('Ошибка: ' + e.message);
+    }
+}
+
+// ----- TMDB -----
+async function searchTMDB(query, resultsDiv) {
+    if (!hasTmdbKey()) {
+        resultsDiv.innerHTML = `
+            <div style="grid-column:1/-1;padding:20px;background:var(--bg-card);border-radius:12px;border:1px solid var(--border)">
+                <p><strong>Вставьте API-ключ TMDB</strong> в начале <code>app.js</code> (<code>TMDB_API_KEY</code>).</p>
+                <p style="margin-top:12px;color:var(--text-muted)">Бесплатно: <a href="https://www.themoviedb.org/settings/api" target="_blank" style="color:var(--primary)">themoviedb.org/settings/api</a></p>
+            </div>`;
+        return;
+    }
+    try {
+        const res = await fetch(`${TMDB_BASE}/search/multi?api_key=${TMDB_API_KEY}&language=ru-RU&query=${encodeURIComponent(query)}`);
+        const data = await res.json();
+        if (!data.results || data.results.length === 0) {
+            resultsDiv.innerHTML = '<p>Ничего не найдено в TMDB</p>';
+            return;
+        }
         resultsDiv.innerHTML = data.results
             .filter(r => r.media_type === 'movie' || r.media_type === 'tv')
             .slice(0, 12)
@@ -734,51 +1123,52 @@ async function searchTMDB() {
                 const title = r.title || r.name;
                 const year = (r.release_date || r.first_air_date || '').slice(0, 4);
                 const poster = r.poster_path ? TMDB_IMG + r.poster_path : null;
-                const rawStr = JSON.stringify(r).replace(/'/g, "&#39;");
+                const rawStr = JSON.stringify(r).replace(/</g, '\\u003c').replace(/'/g, '&#39;');
                 return `
                     <div class="tmdb-card">
                         <div onclick='addFromTMDB(${rawStr})' style="cursor:pointer">
-                            ${poster ? `<img src="${poster}" alt="${title}">` : '<div style="aspect-ratio:2/3;display:flex;align-items:center;justify-content:center;font-size:40px;background:var(--bg-hover)">🎬</div>'}
+                            ${poster ? `<img src="${poster}" alt="" loading="lazy">` : '<div class="tmdb-no-poster">🎬</div>'}
                             <div class="tmdb-card-info">
-                                <strong>${title}</strong><br>
-                                <span style="color:var(--text-muted)">${year} · ${r.media_type === 'tv' ? 'Сериал' : 'Фильм'}</span>
+                                <strong>${title}</strong>
+                                <span>${year} · ${r.media_type === 'tv' ? 'Сериал' : 'Фильм'}</span>
                             </div>
                         </div>
-                        <div style="padding:8px 10px; display:flex; gap:6px;">
+                        <div style="display:flex;gap:6px;padding:0 8px 8px">
                             <button class="btn-primary" style="flex:1;padding:6px;font-size:12px" onclick='addFromTMDB(${rawStr})'>В библиотеку</button>
-                            <button class="btn-secondary" style="padding:6px 10px;font-size:12px" onclick='addFromTMDBToCollection(${rawStr})' title="Добавить в подборку">📁</button>
+                            <button class="btn-secondary" style="padding:6px 10px;font-size:12px" onclick='addFromTMDBToCollection(${rawStr})' title="В подборку">📁</button>
                         </div>
                     </div>`;
             }).join('');
-    } catch (err) {
+    } catch (e) {
+        console.error(e);
         resultsDiv.innerHTML = '<p style="color:var(--danger)">Ошибка запроса к TMDB</p>';
     }
 }
 
 async function createItemFromTMDB(raw) {
-    const isSeries = raw.media_type === 'tv';
+    const type = raw.media_type === 'tv' ? 'tv' : 'movie';
     let details = raw;
-
     try {
-        const type = isSeries ? 'tv' : 'movie';
         const res = await fetch(`${TMDB_BASE}/${type}/${raw.id}?api_key=${TMDB_API_KEY}&language=ru-RU&append_to_response=credits`);
-        details = await res.json();
-    } catch (e) {}
+        if (res.ok) details = await res.json();
+    } catch (_) {}
 
-    const director = details.credits?.crew?.find(c => c.job === 'Director')?.name || 
-                     details.created_by?.[0]?.name || '';
+    const director = (details.credits?.crew || [])
+        .filter(c => c.job === 'Director')
+        .map(c => c.name)
+        .join(', ');
 
     return {
         id: 'tmdb_' + raw.id + '_' + Date.now(),
-        title: details.title || details.name,
+        title: details.title || details.name || raw.title || raw.name,
         originalTitle: details.original_title || details.original_name || '',
-        type: isSeries ? 'series' : (details.genres?.some(g => g.id === 99) ? 'documentary' : 'movie'),
+        type: type === 'tv' ? 'series' : 'movie',
         year: (details.release_date || details.first_air_date || '').slice(0, 4),
-        director: director,
         genres: (details.genres || []).map(g => g.name),
-        source: 'streaming',
+        director: director || '',
         overview: details.overview || '',
         status: 'planned',
+        source: 'streaming',
         rating: 0,
         tags: [],
         review: '',
@@ -787,13 +1177,16 @@ async function createItemFromTMDB(raw) {
         watchedEpisodes: 0,
         poster: details.poster_path ? TMDB_IMG + details.poster_path : null,
         addedAt: new Date().toISOString(),
-        tmdbId: raw.id
+        tmdbId: raw.id,
+        kinopoiskId: null,
+        dataSource: 'tmdb'
     };
 }
 
 function isDuplicate(item) {
     return items.some(i => {
         if (item.tmdbId && i.tmdbId && String(i.tmdbId) === String(item.tmdbId)) return true;
+        if (item.kinopoiskId && i.kinopoiskId && String(i.kinopoiskId) === String(item.kinopoiskId)) return true;
         const sameTitle = (i.title || '').toLowerCase() === (item.title || '').toLowerCase();
         const sameYear = String(i.year || '') === String(item.year || '');
         return sameTitle && sameYear;
@@ -815,7 +1208,6 @@ async function addFromTMDB(raw) {
 async function addFromTMDBToCollection(raw) {
     const item = await createItemFromTMDB(raw);
     if (isDuplicate(item)) {
-        // still allow adding existing item to collection
         const existing = items.find(i =>
             (item.tmdbId && i.tmdbId && String(i.tmdbId) === String(item.tmdbId)) ||
             ((i.title || '').toLowerCase() === (item.title || '').toLowerCase() && String(i.year || '') === String(item.year || ''))
@@ -848,6 +1240,7 @@ function openDetail(id) {
             </div>
             <div class="detail-info">
                 <h2>${item.title}</h2>
+                <p style="margin:6px 0 8px"><span class="source-badge ${sourceBadgeClass(item)}">${sourceLabel(item)}</span></p>
                 ${item.originalTitle ? `<p style="color:var(--text-muted)">${item.originalTitle}</p>` : ''}
                 <div class="detail-meta">
                     ${item.year || '—'} · ${typeLabel(item.type)} · ${sourceLabel(item.source)}
@@ -1005,30 +1398,51 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-// ===== Collections =====
-document.getElementById('create-collection-btn').addEventListener('click', () => {
+// ===== Collections (open / closed + share link) =====
+function makeShareId() {
+    const a = new Uint8Array(9);
+    crypto.getRandomValues(a);
+    return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function collectionShareUrl(shareId) {
+    const base = (API_BASE || window.location.origin || '').replace(/\/$/, '');
+    return `${base}/?share=${encodeURIComponent(shareId)}`;
+}
+
+document.getElementById('create-collection-btn')?.addEventListener('click', () => {
     document.getElementById('collection-name').value = '';
+    const pub = document.getElementById('collection-public');
+    if (pub) pub.checked = false;
     document.getElementById('collection-modal').classList.add('open');
 });
 
-document.getElementById('save-collection').addEventListener('click', () => {
+document.getElementById('save-collection')?.addEventListener('click', () => {
     const name = document.getElementById('collection-name').value.trim();
     if (!name) return;
+    const isPublic = !!document.getElementById('collection-public')?.checked;
+    const shareId = isPublic ? makeShareId() : null;
 
     collections.push({
         id: 'col_' + Date.now(),
         name,
         itemIds: [],
+        isPublic,
+        shareId,
         createdAt: new Date().toISOString()
     });
     Storage.saveCollections(collections);
     document.getElementById('collection-name').value = '';
     document.getElementById('collection-modal').classList.remove('open');
     renderCollections();
+    if (isPublic && shareId) {
+        toast('Открытая подборка создана. Скопируйте ссылку на карточке.');
+    }
 });
 
 function renderCollections() {
     const list = document.getElementById('collections-list');
+    if (!list) return;
     if (collections.length === 0) {
         list.innerHTML = `<div class="empty-state"><span>📁</span><p>Подборок пока нет. Создайте первую!</p></div>`;
         return;
@@ -1036,17 +1450,55 @@ function renderCollections() {
 
     list.innerHTML = collections.map(col => {
         const count = items.filter(i => col.itemIds.includes(i.id)).length;
+        const isPub = !!col.isPublic && col.shareId;
+        const badge = isPub
+            ? '<span class="badge-open">Открытая</span>'
+            : '<span class="badge-closed">Закрытая</span>';
         return `
-        <div class="collection-card" style="cursor:pointer" onclick="openCollectionView('${col.id}')">
-            <h3>${col.name}</h3>
+        <div class="collection-card">
+            <h3 onclick="openCollectionView('${col.id}')" style="cursor:pointer">${col.name}${badge}</h3>
             <div class="count">${count} элементов</div>
-            <div style="margin-top:12px;display:flex;gap:8px">
-                <button class="btn-primary" style="flex:1;padding:8px;font-size:13px" onclick="event.stopPropagation(); openCollectionView('${col.id}')">Открыть</button>
-                <button class="btn-secondary" style="padding:8px 12px;font-size:13px" onclick="event.stopPropagation(); deleteCollection('${col.id}')">Удалить</button>
+            <div class="collection-actions">
+                <button class="btn-primary" onclick="openCollectionView('${col.id}')">Открыть</button>
+                <button class="btn-secondary" onclick="toggleCollectionPublic('${col.id}')">${isPub ? 'Сделать закрытой' : 'Сделать открытой'}</button>
+                ${isPub ? `<button class="btn-secondary" onclick="copyCollectionLink('${col.id}')">📋 Ссылка</button>` : ''}
+                <button class="btn-secondary" onclick="deleteCollection('${col.id}')">Удалить</button>
             </div>
+            ${isPub ? `<p class="hint" style="margin-top:10px;font-size:12px;word-break:break-all">🔗 ${collectionShareUrl(col.shareId)}</p>` : ''}
         </div>`;
     }).join('');
 }
+
+function toggleCollectionPublic(colId) {
+    const col = collections.find(c => c.id === colId);
+    if (!col) return;
+    if (col.isPublic) {
+        col.isPublic = false;
+        // shareId оставляем, но без isPublic ссылка не работает
+        toast('Подборка закрыта');
+    } else {
+        col.isPublic = true;
+        if (!col.shareId) col.shareId = makeShareId();
+        toast('Подборка открыта — можно делиться ссылкой');
+    }
+    Storage.saveCollections(collections);
+    renderCollections();
+}
+
+async function copyCollectionLink(colId) {
+    const col = collections.find(c => c.id === colId);
+    if (!col || !col.shareId) return;
+    const url = collectionShareUrl(col.shareId);
+    try {
+        await navigator.clipboard.writeText(url);
+        toast('Ссылка скопирована');
+    } catch {
+        prompt('Скопируйте ссылку:', url);
+    }
+}
+
+window.toggleCollectionPublic = toggleCollectionPublic;
+window.copyCollectionLink = copyCollectionLink;
 
 function openCollectionView(colId) {
     const col = collections.find(c => c.id === colId);
@@ -1150,6 +1602,8 @@ document.getElementById('create-and-add-btn').addEventListener('click', () => {
         id: 'col_' + Date.now(),
         name,
         itemIds: [...pendingCollectionItemIds],
+        isPublic: false,
+        shareId: null,
         createdAt: new Date().toISOString()
     };
     collections.push(newCol);
@@ -1261,8 +1715,81 @@ function renderAnalytics() {
     }
 }
 
+
+// ===== Public share view (?share=xxx) =====
+async function showPublicShare(shareId) {
+    const auth = document.getElementById('auth-screen');
+    const app = document.getElementById('app');
+    const view = document.getElementById('public-share-view');
+    if (auth) auth.style.display = 'none';
+    if (auth) auth.classList.add('hidden');
+    if (app) app.style.display = 'none';
+    if (!view) return;
+    view.style.display = 'block';
+
+    const titleEl = document.getElementById('public-share-title');
+    const metaEl = document.getElementById('public-share-meta');
+    const grid = document.getElementById('public-share-grid');
+    const err = document.getElementById('public-share-error');
+    if (titleEl) titleEl.textContent = 'Загрузка...';
+    if (grid) grid.innerHTML = '';
+    if (err) { err.style.display = 'none'; err.textContent = ''; }
+
+    try {
+        const res = await fetch(`${API_BASE}/api/public/collection/${encodeURIComponent(shareId)}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Не удалось открыть подборку');
+
+        if (titleEl) titleEl.textContent = data.name || 'Подборка';
+        if (metaEl) metaEl.textContent = `${data.itemCount || 0} фильмов · открытая подборка`;
+        if (!grid) return;
+
+        const list = data.items || [];
+        if (!list.length) {
+            grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><span>📁</span><p>В подборке пока пусто</p></div>';
+            return;
+        }
+        grid.innerHTML = list.map(item => `
+            <div class="card" style="cursor:default">
+                <div class="card-poster">
+                    ${item.poster ? `<img src="${item.poster}" alt="" loading="lazy">` : '🎬'}
+                    <span class="source-badge ${item.kinopoiskId ? 'kp' : (item.tmdbId ? 'tmdb' : 'manual')}">${item.kinopoiskId ? 'Кинопоиск' : (item.tmdbId ? 'TMDB' : 'Вручную')}</span>
+                </div>
+                <div class="card-body">
+                    <div class="card-title">${item.title || ''}</div>
+                    <div class="card-meta">
+                        ${item.year || '—'} · ${item.type === 'series' ? 'Сериал' : 'Фильм'}
+                        ${item.genres && item.genres.length ? `<br><span style="opacity:0.8">${item.genres.slice(0,3).join(', ')}</span>` : ''}
+                    </div>
+                    ${item.overview ? `<p style="font-size:12px;color:var(--text-muted);margin-top:8px;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden">${item.overview}</p>` : ''}
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        if (titleEl) titleEl.textContent = 'Подборка недоступна';
+        if (err) {
+            err.style.display = 'block';
+            err.textContent = e.message || 'Ошибка';
+        }
+    }
+}
+
+function getShareIdFromUrl() {
+    try {
+        return new URLSearchParams(window.location.search).get('share') || '';
+    } catch {
+        return '';
+    }
+}
+
+
 // ===== Init =====
 (async function init() {
+    const shareId = getShareIdFromUrl();
+    if (shareId) {
+        await showPublicShare(shareId);
+        return;
+    }
     if (Storage.getToken()) {
         try {
             const data = await Storage.api('/api/me');
@@ -1278,3 +1805,9 @@ function renderAnalytics() {
         showAuth();
     }
 })();
+
+// onclick-handlers from search cards
+window.addFromKP = addFromKP;
+window.addFromKPToCollection = addFromKPToCollection;
+window.addFromTMDB = addFromTMDB;
+window.addFromTMDBToCollection = addFromTMDBToCollection;

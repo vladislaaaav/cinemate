@@ -1,0 +1,10 @@
+[
+  {
+    "id": "user_3d4e7d9d515f445b",
+    "name": "123",
+    "email": "a@b.com",
+    "salt": "3feaba4276889d5088568aaff5aa22b4",
+    "hash": "89aaae09fa62694594d215556b79538683414ad6cb30d1c5f674fe05092079f3d0e8d8571a9dc967c4278f413c51cf0f2f7ce723ee678152680e74c6ea0421e2",
+    "createdAt": "2026-10-08T07:18:01.031Z"
+  }
+]

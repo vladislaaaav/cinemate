@@ -214,17 +214,17 @@
                 </header>
 
                 <div class="add-tabs">
-                    <button class="tab-btn active" data-tab="search">Поиск во внешней базе (TMDB)</button>
+                    <button class="tab-btn active" data-tab="search">Поиск во внешней базе</button>
                     <button class="tab-btn" data-tab="manual">Ручное добавление</button>
                 </div>
 
                 <div id="tab-search" class="tab-content active">
                     <div class="search-external">
-                        <input type="text" id="tmdb-search" placeholder="Введите название фильма/сериала...">
-                        <button id="tmdb-search-btn" class="btn-primary">Найти</button>
+                        <input type="text" id="ext-search" placeholder="Введите название фильма/сериала...">
+                        <button id="ext-search-btn" class="btn-primary">Найти</button>
                     </div>
-                    <div id="tmdb-results" class="tmdb-results"></div>
-                    <p class="hint">Интеграция с TMDB: до 90% позиций добавляются автоматически с обложкой, описанием и метаданными. Время добавления: 20–30 сек.</p>
+                    <p id="api-hint" class="hint">Сначала ищем в Кинопоиске, если ничего нет — в TMDB. Повторы скрываются.</p>
+                    <div id="ext-results" class="tmdb-results"></div>
                 </div>
 
                 <div id="tab-manual" class="tab-content">
@@ -402,7 +402,28 @@
             <button class="modal-close">&times;</button>
             <h2>Новая подборка</h2>
             <input type="text" id="collection-name" placeholder="Название подборки">
+            <label class="checkbox-row" style="display:flex;align-items:center;gap:10px;margin-top:14px;cursor:pointer">
+                <input type="checkbox" id="collection-public">
+                <span>Открытая подборка (доступ по ссылке)</span>
+            </label>
+            <p class="hint" style="margin-top:8px;font-size:12px">Закрытые видите только вы. Открытые можно открыть по ссылке без входа.</p>
             <button id="save-collection" class="btn-primary" style="margin-top:16px">Создать</button>
+        </div>
+    </div>
+
+    <!-- Публичный просмотр подборки по ссылке -->
+    <div id="public-share-view" class="public-share-view" style="display:none">
+        <div class="public-share-inner">
+            <div class="public-share-header">
+                <div>
+                    <div class="public-share-brand">🎬 Cinemate</div>
+                    <h1 id="public-share-title">Подборка</h1>
+                    <p id="public-share-meta" class="hint"></p>
+                </div>
+                <a href="/" class="btn-primary" id="public-share-home">Войти в Cinemate</a>
+            </div>
+            <div id="public-share-grid" class="content-grid"></div>
+            <p id="public-share-error" class="hint" style="display:none;color:var(--danger)"></p>
         </div>
     </div>
 
@@ -420,6 +441,7 @@
     </div>
 
     <script src="config.js"></script>
+    <script src="api-keys.js"></script>
     <script src="app.js"></script>
 </body>
 </html>
