@@ -1596,3 +1596,65 @@ select {
     font-size: 14px;
     flex: 1;
 }
+
+.source-badge.local {
+    background: rgba(156, 136, 255, 0.2);
+    color: #a29bfe;
+}
+.local-video-list {
+    margin-top: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+.local-video-item {
+    display: flex;
+    gap: 14px;
+    padding: 12px;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+}
+.local-video-thumb {
+    width: 80px;
+    height: 120px;
+    object-fit: cover;
+    border-radius: 8px;
+    background: var(--bg-hover);
+    flex-shrink: 0;
+}
+.local-video-thumb.placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 32px;
+}
+.local-video-fields {
+    flex: 1;
+    min-width: 200px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.local-video-fields input[type="text"] {
+    width: 100%;
+}
+.local-video-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    word-break: break-all;
+}
+.local-video-item .file-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+}

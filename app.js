@@ -831,13 +831,233 @@ document.getElementById('manual-form').addEventListener('submit', async e => {
     document.querySelector('[data-page="library"]').click();
 });
 
+
+// ===== Local video files (desktop / browser) =====
+let pendingLocalVideos = [];
+
+function isElectronApp() {
+    return !!(window.electronAPI || (navigator.userAgent || '').includes('Electron'));
+}
+
+function formatBytes(n) {
+    if (!n && n !== 0) return '';
+    if (n < 1024) return n + ' Б';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' КБ';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' МБ';
+    return (n / 1073741824).toFixed(2) + ' ГБ';
+}
+
+function titleFromFilename(name) {
+    return String(name || 'Видео')
+        .replace(/\.[^.]+$/, '')
+        .replace(/[._]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim() || 'Видео';
+}
+
+function captureVideoThumbnail(file) {
+    return new Promise((resolve) => {
+        try {
+            const url = URL.createObjectURL(file);
+            const video = document.createElement('video');
+            video.preload = 'metadata';
+            video.muted = true;
+            video.playsInline = true;
+            video.src = url;
+            const fail = () => {
+                try { URL.revokeObjectURL(url); } catch (_) {}
+                resolve(null);
+            };
+            video.addEventListener('error', fail);
+            video.addEventListener('loadeddata', () => {
+                try {
+                    const t = Math.min(3, (video.duration || 3) * 0.1);
+                    video.currentTime = t;
+                } catch (_) {
+                    fail();
+                }
+            });
+            video.addEventListener('seeked', () => {
+                try {
+                    const canvas = document.createElement('canvas');
+                    const w = video.videoWidth || 320;
+                    const h = video.videoHeight || 480;
+                    canvas.width = Math.min(w, 400);
+                    canvas.height = Math.round(canvas.width * (h / w));
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                    const data = canvas.toDataURL('image/jpeg', 0.85);
+                    URL.revokeObjectURL(url);
+                    resolve(data);
+                } catch (_) {
+                    fail();
+                }
+            });
+            setTimeout(fail, 8000);
+        } catch (_) {
+            resolve(null);
+        }
+    });
+}
+
+function renderLocalVideoList() {
+    const box = document.getElementById('local-video-list');
+    const addBtn = document.getElementById('local-video-add');
+    if (!box) return;
+    if (!pendingLocalVideos.length) {
+        box.innerHTML = '';
+        if (addBtn) addBtn.style.display = 'none';
+        return;
+    }
+    if (addBtn) addBtn.style.display = 'inline-flex';
+    box.innerHTML = pendingLocalVideos.map((v, idx) => `
+        <div class="local-video-item" data-idx="${idx}">
+            ${v.poster
+                ? `<img class="local-video-thumb" src="${v.poster}" alt="">`
+                : `<div class="local-video-thumb placeholder">🎬</div>`}
+            <div class="local-video-fields">
+                <input type="text" class="local-title-input" data-idx="${idx}" value="${(v.title || '').replace(/"/g, '&quot;')}">
+                <div class="local-video-meta">${v.fileName || ''} · ${formatBytes(v.size)}${v.localPath ? '<br>' + v.localPath : ''}</div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <label class="file-btn">🖼 Обложка
+                        <input type="file" accept="image/*" class="local-poster-input" data-idx="${idx}" hidden>
+                    </label>
+                    <button type="button" class="btn-secondary local-remove-btn" data-idx="${idx}" style="padding:8px 12px;font-size:13px">Убрать</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+
+    box.querySelectorAll('.local-title-input').forEach(inp => {
+        inp.addEventListener('input', () => {
+            const i = +inp.dataset.idx;
+            if (pendingLocalVideos[i]) pendingLocalVideos[i].title = inp.value;
+        });
+    });
+    box.querySelectorAll('.local-poster-input').forEach(inp => {
+        inp.addEventListener('change', async () => {
+            const i = +inp.dataset.idx;
+            const file = inp.files && inp.files[0];
+            if (!file || !pendingLocalVideos[i]) return;
+            const reader = new FileReader();
+            reader.onload = () => {
+                pendingLocalVideos[i].poster = reader.result;
+                renderLocalVideoList();
+            };
+            reader.readAsDataURL(file);
+        });
+    });
+    box.querySelectorAll('.local-remove-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const i = +btn.dataset.idx;
+            pendingLocalVideos.splice(i, 1);
+            renderLocalVideoList();
+        });
+    });
+}
+
+document.getElementById('local-video-pick')?.addEventListener('click', () => {
+    document.getElementById('local-video-input')?.click();
+});
+
+document.getElementById('local-video-input')?.addEventListener('change', async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+    toast('Обработка файлов...');
+    for (const file of files) {
+        const title = titleFromFilename(file.name);
+        const localPath = file.path || ''; // Electron
+        const poster = await captureVideoThumbnail(file);
+        // дубликат по пути или имени
+        const dup = items.some(i =>
+            (localPath && i.localPath && i.localPath === localPath) ||
+            (i.isLocalFile && i.fileName === file.name && i.title === title)
+        ) || pendingLocalVideos.some(v => (localPath && v.localPath === localPath) || v.fileName === file.name);
+        if (dup) {
+            toast(`«${title}» уже есть — пропуск`);
+            continue;
+        }
+        pendingLocalVideos.push({
+            title,
+            fileName: file.name,
+            localPath,
+            size: file.size,
+            poster
+        });
+    }
+    e.target.value = '';
+    renderLocalVideoList();
+    toast('Проверьте названия и обложки, затем «Добавить в библиотеку»');
+});
+
+document.getElementById('local-video-add')?.addEventListener('click', () => {
+    if (!pendingLocalVideos.length) return;
+    let added = 0;
+    for (const v of pendingLocalVideos) {
+        const title = (v.title || titleFromFilename(v.fileName)).trim();
+        if (!title) continue;
+        const item = {
+            id: 'local_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+            title,
+            originalTitle: v.fileName || '',
+            type: 'movie',
+            year: '',
+            genres: [],
+            director: '',
+            overview: v.localPath ? `Локальный файл: ${v.localPath}` : `Локальный файл: ${v.fileName}`,
+            status: 'planned',
+            source: 'local',
+            isLocalFile: true,
+            localPath: v.localPath || '',
+            fileName: v.fileName || '',
+            fileSize: v.size || 0,
+            rating: 0,
+            tags: ['локальный'],
+            review: '',
+            seasons: null,
+            episodes: null,
+            watchedEpisodes: 0,
+            poster: v.poster || null,
+            addedAt: new Date().toISOString(),
+            tmdbId: null,
+            kinopoiskId: null,
+            dataSource: 'local'
+        };
+        if (isDuplicate(item)) {
+            toast(`«${title}» уже в библиотеке`);
+            continue;
+        }
+        items.unshift(item);
+        added++;
+    }
+    if (added) {
+        Storage.saveItems(items);
+        pendingLocalVideos = [];
+        renderLocalVideoList();
+        toast(`Добавлено локальных видео: ${added}`);
+        document.querySelector('[data-page="library"]')?.click();
+    }
+});
+
+
 // ===== External Search (Kinopoisk first, then TMDB) =====
 function sourceLabel(item) {
+    // может прийти строка source или объект item
+    if (typeof item === 'string') {
+        if (item === 'local') return 'Локальный файл';
+        if (item === 'streaming') return 'Стриминг';
+        if (item === 'physical') return 'Физ. носитель';
+        return item;
+    }
+    if (!item || typeof item !== 'object') return 'Вручную';
+    if (item.isLocalFile || item.source === 'local') return 'Локальный файл';
     if (item.dataSource === 'kinopoisk' || item.kinopoiskId) return 'Кинопоиск';
     if (item.dataSource === 'tmdb' || item.tmdbId) return 'TMDB';
     return 'Вручную';
 }
 function sourceBadgeClass(item) {
+    if (!item || typeof item !== 'object') return 'manual';
+    if (item.isLocalFile || item.source === 'local') return 'local';
     if (item.dataSource === 'kinopoisk' || item.kinopoiskId) return 'kp';
     if (item.dataSource === 'tmdb' || item.tmdbId) return 'tmdb';
     return 'manual';
@@ -1370,6 +1590,24 @@ function openDetail(id) {
             </div>
         </div>
 
+        ${item.isLocalFile || item.source === 'local' ? `
+            <div style="margin:12px 0;padding:12px;background:var(--bg);border-radius:10px;border:1px solid var(--border)">
+                <strong>📁 Локальный файл</strong>
+                <p class="hint" style="margin:6px 0">${item.localPath || item.fileName || 'путь не указан'}</p>
+                <div class="form-group" style="margin-top:10px">
+                    <label>Название</label>
+                    <input type="text" id="detail-local-title" value="${(item.title || '').replace(/"/g, '&quot;')}">
+                </div>
+                <div class="form-group">
+                    <label>Обложка</label>
+                    <label class="file-btn" style="display:inline-flex;margin-top:6px">Выбрать изображение
+                        <input type="file" id="detail-local-poster" accept="image/*" hidden>
+                    </label>
+                    <div id="detail-local-poster-preview" style="margin-top:8px"></div>
+                </div>
+                <button type="button" class="btn-primary" id="detail-local-save" style="margin-top:10px">Сохранить название и обложку</button>
+            </div>
+        ` : ''}
         ${item.overview ? `<p style="margin-bottom:16px;line-height:1.6">${item.overview}</p>` : ''}
         
         ${item.tags?.length ? `<p><strong>Теги:</strong> ${item.tags.map(t => `<span style="background:var(--bg);padding:2px 8px;border-radius:12px;font-size:12px;margin-right:4px">${t}</span>`).join('')}</p>` : ''}
@@ -1438,6 +1676,32 @@ function openDetail(id) {
     `;
 
     modal.classList.add('open');
+
+    document.getElementById('detail-local-save')?.addEventListener('click', () => {
+        const it = items.find(x => x.id === id);
+        if (!it) return;
+        const titleInp = document.getElementById('detail-local-title');
+        if (titleInp && titleInp.value.trim()) it.title = titleInp.value.trim();
+        Storage.saveItems(items);
+        toast('Название сохранено');
+        renderLibrary();
+        openDetail(id);
+    });
+    document.getElementById('detail-local-poster')?.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = () => {
+            const it = items.find(x => x.id === id);
+            if (!it) return;
+            it.poster = reader.result;
+            Storage.saveItems(items);
+            toast('Обложка обновлена');
+            renderLibrary();
+            openDetail(id);
+        };
+        reader.readAsDataURL(file);
+    });
 }
 
 async function saveDetailChanges() {
