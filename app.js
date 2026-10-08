@@ -241,6 +241,60 @@ document.getElementById('logout-btn').addEventListener('click', async () => {
     showAuth();
 });
 
+// ===== Profile =====
+document.getElementById('profile-btn')?.addEventListener('click', () => {
+    const u = currentUser || Storage.getCachedUser() || {};
+    document.getElementById('profile-name').value = u.name || '';
+    document.getElementById('profile-email').value = u.email || '';
+    document.getElementById('profile-pass-current').value = '';
+    document.getElementById('profile-pass-new').value = '';
+    document.getElementById('profile-msg').textContent = '';
+    document.getElementById('profile-modal').classList.add('open');
+});
+
+document.getElementById('profile-save')?.addEventListener('click', async () => {
+    const name = document.getElementById('profile-name').value.trim();
+    const email = document.getElementById('profile-email').value.trim().toLowerCase();
+    const msg = document.getElementById('profile-msg');
+    try {
+        const data = await Storage.api('/api/me', {
+            method: 'PUT',
+            body: JSON.stringify({ name, email })
+        });
+        currentUser = data.user;
+        Storage.setCachedUser(data.user);
+        document.getElementById('current-user-name').textContent = data.user.name;
+        document.getElementById('current-user-email').textContent = data.user.email;
+        msg.style.color = 'var(--primary)';
+        msg.textContent = 'Профиль сохранён';
+        toast('Профиль обновлён');
+    } catch (e) {
+        msg.style.color = 'var(--danger)';
+        msg.textContent = e.message;
+    }
+});
+
+document.getElementById('profile-pass-save')?.addEventListener('click', async () => {
+    const currentPassword = document.getElementById('profile-pass-current').value;
+    const newPassword = document.getElementById('profile-pass-new').value;
+    const msg = document.getElementById('profile-msg');
+    try {
+        await Storage.api('/api/me/password', {
+            method: 'PUT',
+            body: JSON.stringify({ currentPassword, newPassword })
+        });
+        document.getElementById('profile-pass-current').value = '';
+        document.getElementById('profile-pass-new').value = '';
+        msg.style.color = 'var(--primary)';
+        msg.textContent = 'Пароль изменён';
+        toast('Пароль изменён');
+    } catch (e) {
+        msg.style.color = 'var(--danger)';
+        msg.textContent = e.message;
+    }
+});
+
+
 // Init session — check token at end of file
 window.__cinemate_authed = !!Storage.getToken();
 if (!window.__cinemate_authed) {
@@ -375,7 +429,7 @@ document.querySelectorAll('.nav-btn').forEach(btn => {
         
         if (btn.dataset.page === 'library') renderLibrary();
         if (btn.dataset.page === 'analytics') renderAnalytics();
-        if (btn.dataset.page === 'collections') renderCollections();
+        if (btn.dataset.page === 'collections') { renderCollections(); }
 
         closeMobileSidebar();
     });
@@ -1451,9 +1505,10 @@ function renderCollections() {
     list.innerHTML = collections.map(col => {
         const count = items.filter(i => col.itemIds.includes(i.id)).length;
         const isPub = !!col.isPublic && col.shareId;
+        const sharedN = (col.sharedWith || []).length;
         const badge = isPub
             ? '<span class="badge-open">Открытая</span>'
-            : '<span class="badge-closed">Закрытая</span>';
+            : (sharedN ? '<span class="badge-open">Общая · ' + sharedN + '</span>' : '<span class="badge-closed">Закрытая</span>');
         return `
         <div class="collection-card">
             <h3 onclick="openCollectionView('${col.id}')" style="cursor:pointer">${col.name}${badge}</h3>
@@ -1462,12 +1517,138 @@ function renderCollections() {
                 <button class="btn-primary" onclick="openCollectionView('${col.id}')">Открыть</button>
                 <button class="btn-secondary" onclick="toggleCollectionPublic('${col.id}')">${isPub ? 'Сделать закрытой' : 'Сделать открытой'}</button>
                 ${isPub ? `<button class="btn-secondary" onclick="copyCollectionLink('${col.id}')">📋 Ссылка</button>` : ''}
+                <button class="btn-secondary" onclick="openShareUserModal('${col.id}')">👥 Доступ</button>
                 <button class="btn-secondary" onclick="deleteCollection('${col.id}')">Удалить</button>
             </div>
             ${isPub ? `<p class="hint" style="margin-top:10px;font-size:12px;word-break:break-all">🔗 ${collectionShareUrl(col.shareId)}</p>` : ''}
+            ${sharedN ? `<p class="hint" style="margin-top:6px;font-size:12px">Доступ: ${(col.sharedWith||[]).map(m => m.email || m.name).join(', ')}</p>` : ''}
         </div>`;
     }).join('');
+    renderSharedWithMe();
 }
+
+let sharingCollectionId = null;
+
+function openShareUserModal(colId) {
+    const col = collections.find(c => c.id === colId);
+    if (!col) return;
+    sharingCollectionId = colId;
+    if (!col.sharedWith) col.sharedWith = [];
+    document.getElementById('share-user-col-name').textContent = 'Подборка: ' + col.name;
+    document.getElementById('share-user-email').value = '';
+    renderShareUserList();
+    document.getElementById('share-user-modal').classList.add('open');
+}
+
+function renderShareUserList() {
+    const col = collections.find(c => c.id === sharingCollectionId);
+    const box = document.getElementById('share-user-list');
+    if (!col || !box) return;
+    const list = col.sharedWith || [];
+    if (!list.length) {
+        box.innerHTML = '<p class="hint">Пока никого нет. Добавьте пользователя по email.</p>';
+        return;
+    }
+    box.innerHTML = list.map(m => `
+        <div class="share-member">
+            <span><strong>${m.name || ''}</strong><br><small>${m.email || ''}</small></span>
+            <button class="btn-secondary" onclick="removeShareUser('${m.userId}')">Убрать</button>
+        </div>
+    `).join('');
+}
+
+document.getElementById('share-user-add')?.addEventListener('click', async () => {
+    const email = document.getElementById('share-user-email').value.trim().toLowerCase();
+    if (!email || !sharingCollectionId) return;
+    const col = collections.find(c => c.id === sharingCollectionId);
+    if (!col) return;
+    try {
+        const data = await Storage.api('/api/users/lookup?email=' + encodeURIComponent(email));
+        const u = data.user;
+        if (!col.sharedWith) col.sharedWith = [];
+        if (col.sharedWith.some(m => m.userId === u.id)) {
+            toast('Уже есть доступ');
+            return;
+        }
+        col.sharedWith.push({ userId: u.id, email: u.email, name: u.name });
+        col.updatedAt = new Date().toISOString();
+        Storage.saveCollections(collections);
+        document.getElementById('share-user-email').value = '';
+        renderShareUserList();
+        renderCollections();
+        toast('Доступ выдан: ' + u.email);
+    } catch (e) {
+        toast(e.message || 'Пользователь не найден');
+    }
+});
+
+function removeShareUser(userId) {
+    const col = collections.find(c => c.id === sharingCollectionId);
+    if (!col) return;
+    col.sharedWith = (col.sharedWith || []).filter(m => m.userId !== userId);
+    col.updatedAt = new Date().toISOString();
+    Storage.saveCollections(collections);
+    renderShareUserList();
+    renderCollections();
+    toast('Доступ закрыт');
+}
+
+async function renderSharedWithMe() {
+    const list = document.getElementById('shared-with-me-list');
+    if (!list) return;
+    try {
+        const data = await Storage.api('/api/shared-with-me');
+        if (!data.length) {
+            list.innerHTML = '<div class="empty-state"><span>🔒</span><p>Нет общих закрытых подборок</p></div>';
+            return;
+        }
+        list.innerHTML = data.map(s => `
+            <div class="collection-card">
+                <h3>${s.name} <span class="badge-open">Общая</span></h3>
+                <div class="count">${s.itemCount} элементов · от ${s.ownerName || s.ownerEmail}</div>
+                <div class="collection-actions">
+                    <button class="btn-primary" onclick="openSharedCollection('${s.ownerId}','${s.collectionId}','${(s.name||'').replace(/'/g, "\'")}')">Смотреть</button>
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        list.innerHTML = '<p class="hint">Не удалось загрузить</p>';
+    }
+}
+
+async function openSharedCollection(ownerId, collectionId, name) {
+    try {
+        const data = await Storage.api(`/api/shared-collection/${ownerId}/${collectionId}`);
+        // show in modal as read-only grid
+        const modal = document.getElementById('modal');
+        const body = document.getElementById('modal-body');
+        const itemsList = data.items || [];
+        body.innerHTML = `
+            <h2>${data.name || name || 'Подборка'}</h2>
+            <p class="hint">Общая закрытая подборка · ${data.ownerName || ''}</p>
+            <div class="content-grid" style="margin-top:16px">
+                ${itemsList.length ? itemsList.map(item => `
+                    <div class="card" style="cursor:default">
+                        <div class="card-poster">
+                            ${item.poster ? `<img src="${item.poster}" alt="" loading="lazy">` : '🎬'}
+                        </div>
+                        <div class="card-body">
+                            <div class="card-title">${item.title || ''}</div>
+                            <div class="card-meta">${item.year || '—'} · ${item.type === 'series' ? 'Сериал' : 'Фильм'}</div>
+                        </div>
+                    </div>
+                `).join('') : '<p class="hint">Пусто</p>'}
+            </div>`;
+        modal.classList.add('open');
+    } catch (e) {
+        toast(e.message || 'Нет доступа');
+    }
+}
+
+window.openShareUserModal = openShareUserModal;
+window.removeShareUser = removeShareUser;
+window.openSharedCollection = openSharedCollection;
+
 
 function toggleCollectionPublic(colId) {
     const col = collections.find(c => c.id === colId);

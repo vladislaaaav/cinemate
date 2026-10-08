@@ -68,6 +68,37 @@ function getShares() { return readJSON(SHARES_FILE, {}); }
 function saveShares(s) { writeJSON(SHARES_FILE, s); }
 
 /** Обновить индекс публичных ссылок для пользователя */
+function rebuildSharedInboxFromOwner(ownerId, cols, prevCols) {
+  var affected = {};
+  function markMembers(list) {
+    (list || []).forEach(function (col) {
+      (col.sharedWith || []).forEach(function (m) {
+        if (m && m.userId) affected[m.userId] = true;
+      });
+    });
+  }
+  markMembers(prevCols);
+  markMembers(cols);
+
+  var currentByMember = {};
+  (cols || []).forEach(function (col) {
+    (col.sharedWith || []).forEach(function (m) {
+      if (!m || !m.userId) return;
+      if (!currentByMember[m.userId]) currentByMember[m.userId] = [];
+      currentByMember[m.userId].push(col.id);
+    });
+  });
+
+  Object.keys(affected).forEach(function (memberId) {
+    var inbox = readJSON(userFile(memberId, 'shared_inbox'), []);
+    inbox = inbox.filter(function (e) { return e.ownerId !== ownerId; });
+    (currentByMember[memberId] || []).forEach(function (collectionId) {
+      inbox.push({ ownerId: ownerId, collectionId: collectionId });
+    });
+    writeJSON(userFile(memberId, 'shared_inbox'), inbox);
+  });
+}
+
 function updateSharesForUser(userId, cols) {
   var shares = getShares();
   Object.keys(shares).forEach(function (sid) {
@@ -260,6 +291,138 @@ async function handle(req, res) {
       return send(res, 200, { user: { id: auth2.id, name: auth2.name, email: auth2.email } });
     }
 
+    // Редактирование профиля
+    if (p === '/api/me' && req.method === 'PUT') {
+      var authMe = getAuthUser(req);
+      if (!authMe) return send(res, 401, { error: 'Не авторизован' });
+      var bodyMe = await parseBody(req);
+      var usersMe = getUsers();
+      var idxMe = usersMe.findIndex(function (u) { return u.id === authMe.id; });
+      if (idxMe === -1) return send(res, 404, { error: 'Пользователь не найден' });
+      if (bodyMe.name && String(bodyMe.name).trim()) {
+        usersMe[idxMe].name = String(bodyMe.name).trim();
+      }
+      if (bodyMe.email) {
+        var emailNew = String(bodyMe.email).trim().toLowerCase();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailNew)) {
+          return send(res, 400, { error: 'Некорректный email' });
+        }
+        if (usersMe.some(function (u, i) { return i !== idxMe && u.email === emailNew; })) {
+          return send(res, 400, { error: 'Этот email уже занят' });
+        }
+        usersMe[idxMe].email = emailNew;
+      }
+      saveUsers(usersMe);
+      return send(res, 200, {
+        user: { id: usersMe[idxMe].id, name: usersMe[idxMe].name, email: usersMe[idxMe].email }
+      });
+    }
+
+    // Смена пароля
+    if (p === '/api/me/password' && req.method === 'PUT') {
+      var authPw = getAuthUser(req);
+      if (!authPw) return send(res, 401, { error: 'Не авторизован' });
+      var bodyPw = await parseBody(req);
+      var cur = bodyPw.currentPassword || '';
+      var neu = bodyPw.newPassword || '';
+      if (!cur || !neu) return send(res, 400, { error: 'Заполните все поля' });
+      if (String(neu).length < 4) return send(res, 400, { error: 'Новый пароль минимум 4 символа' });
+      var usersPw = getUsers();
+      var idxPw = usersPw.findIndex(function (u) { return u.id === authPw.id; });
+      if (idxPw === -1) return send(res, 404, { error: 'Пользователь не найден' });
+      var uPw = usersPw[idxPw];
+      if (!verifyPassword(cur, uPw.salt, uPw.hash)) {
+        return send(res, 401, { error: 'Неверный текущий пароль' });
+      }
+      var hpPw = hashPassword(neu);
+      usersPw[idxPw].salt = hpPw.salt;
+      usersPw[idxPw].hash = hpPw.hash;
+      saveUsers(usersPw);
+      return send(res, 200, { ok: true, message: 'Пароль изменён' });
+    }
+
+    // Поиск пользователя по email (для шаринга)
+    if (p === '/api/users/lookup' && req.method === 'GET') {
+      var authLu = getAuthUser(req);
+      if (!authLu) return send(res, 401, { error: 'Не авторизован' });
+      var emailLu = (url.searchParams.get('email') || '').trim().toLowerCase();
+      if (!emailLu) return send(res, 400, { error: 'Укажите email' });
+      var found = getUsers().find(function (u) { return u.email === emailLu; });
+      if (!found) return send(res, 404, { error: 'Пользователь не найден' });
+      if (found.id === authLu.id) return send(res, 400, { error: 'Нельзя добавить самого себя' });
+      return send(res, 200, { user: { id: found.id, name: found.name, email: found.email } });
+    }
+
+    // Подборки, которыми поделились со мной
+    if (p === '/api/shared-with-me' && req.method === 'GET') {
+      var authSw = getAuthUser(req);
+      if (!authSw) return send(res, 401, { error: 'Не авторизован' });
+      var inbox = readJSON(userFile(authSw.id, 'shared_inbox'), []);
+      var result = [];
+      inbox.forEach(function (entry) {
+        var cols = readJSON(userFile(entry.ownerId, 'collections'), []);
+        var col = cols.find(function (c) { return c.id === entry.collectionId; });
+        if (!col) return;
+        var still = (col.sharedWith || []).some(function (m) { return m.userId === authSw.id; });
+        if (!still) return;
+        var owner = getUsers().find(function (u) { return u.id === entry.ownerId; });
+        result.push({
+          collectionId: col.id,
+          name: col.name,
+          ownerId: entry.ownerId,
+          ownerName: owner ? owner.name : 'Пользователь',
+          ownerEmail: owner ? owner.email : '',
+          itemCount: (col.itemIds || []).length,
+          updatedAt: col.updatedAt || col.createdAt || null
+        });
+      });
+      return send(res, 200, result);
+    }
+
+    // Просмотр чужой закрытой общей подборки
+    if (p.indexOf('/api/shared-collection/') === 0 && req.method === 'GET') {
+      var authSc = getAuthUser(req);
+      if (!authSc) return send(res, 401, { error: 'Не авторизован' });
+      // /api/shared-collection/:ownerId/:collectionId
+      var partsSc = p.split('/');
+      var ownerId = partsSc[3];
+      var colIdSc = partsSc[4];
+      if (!ownerId || !colIdSc) return send(res, 400, { error: 'Некорректный запрос' });
+      var colsSc = readJSON(userFile(ownerId, 'collections'), []);
+      var colSc = colsSc.find(function (c) { return c.id === colIdSc; });
+      if (!colSc) return send(res, 404, { error: 'Подборка не найдена' });
+      var allowed = (colSc.sharedWith || []).some(function (m) { return m.userId === authSc.id; });
+      if (!allowed && ownerId !== authSc.id) {
+        return send(res, 403, { error: 'Нет доступа к этой подборке' });
+      }
+      var itemsSc = readJSON(userFile(ownerId, 'items'), []);
+      var listSc = (colSc.itemIds || []).map(function (id) {
+        return itemsSc.find(function (i) { return i.id === id; });
+      }).filter(Boolean).map(function (i) {
+        return {
+          id: i.id,
+          title: i.title,
+          originalTitle: i.originalTitle,
+          type: i.type,
+          year: i.year,
+          genres: i.genres,
+          overview: i.overview,
+          poster: i.poster,
+          rating: i.rating,
+          dataSource: i.dataSource,
+          kinopoiskId: i.kinopoiskId,
+          tmdbId: i.tmdbId
+        };
+      });
+      var ownerSc = getUsers().find(function (u) { return u.id === ownerId; });
+      return send(res, 200, {
+        name: colSc.name,
+        ownerName: ownerSc ? ownerSc.name : '',
+        items: listSc
+      });
+    }
+
+
     if (p === '/api/items' && req.method === 'GET') {
       var auth3 = getAuthUser(req);
       if (!auth3) return send(res, 401, { error: 'Не авторизован' });
@@ -286,8 +449,10 @@ async function handle(req, res) {
       if (!auth6) return send(res, 401, { error: 'Не авторизован' });
       var body5 = await parseBody(req);
       if (!Array.isArray(body5)) return send(res, 400, { error: 'Ожидается массив' });
+      var prevCols = readJSON(userFile(auth6.id, 'collections'), []);
       writeJSON(userFile(auth6.id, 'collections'), body5);
       updateSharesForUser(auth6.id, body5);
+      rebuildSharedInboxFromOwner(auth6.id, body5, prevCols);
       return send(res, 200, { ok: true });
     }
 
