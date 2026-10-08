@@ -60,8 +60,8 @@ const Storage = {
             .catch(e => { console.error(e); toast('Ошибка сохранения библиотеки'); });
     },
     saveCollections(cols) {
-        this.api('/api/collections', { method: 'PUT', body: JSON.stringify(cols) })
-            .catch(e => { console.error(e); toast('Ошибка сохранения подборок'); });
+        return this.api('/api/collections', { method: 'PUT', body: JSON.stringify(cols) })
+            .catch(e => { console.error(e); toast('Ошибка сохранения подборок'); throw e; });
     },
     getTheme() {
         return localStorage.getItem('cinemate_theme') || 'dark';
@@ -1560,59 +1560,69 @@ function renderShareUserList() {
 document.getElementById('share-user-add')?.addEventListener('click', async () => {
     const email = document.getElementById('share-user-email').value.trim().toLowerCase();
     if (!email || !sharingCollectionId) return;
-    const col = collections.find(c => c.id === sharingCollectionId);
-    if (!col) return;
     try {
-        const data = await Storage.api('/api/users/lookup?email=' + encodeURIComponent(email));
-        const u = data.user;
-        if (!col.sharedWith) col.sharedWith = [];
-        if (col.sharedWith.some(m => m.userId === u.id)) {
-            toast('Уже есть доступ');
-            return;
+        const data = await Storage.api('/api/collections/share', {
+            method: 'POST',
+            body: JSON.stringify({ collectionId: sharingCollectionId, email })
+        });
+        // синхронизируем локальную копию
+        const idx = collections.findIndex(c => c.id === sharingCollectionId);
+        if (idx >= 0 && data.collection) {
+            collections[idx] = data.collection;
+        } else if (data.collection) {
+            collections.push(data.collection);
         }
-        col.sharedWith.push({ userId: u.id, email: u.email, name: u.name });
-        col.updatedAt = new Date().toISOString();
-        Storage.saveCollections(collections);
         document.getElementById('share-user-email').value = '';
         renderShareUserList();
         renderCollections();
-        toast('Доступ выдан: ' + u.email);
+        toast(data.message || ('Доступ выдан: ' + email));
     } catch (e) {
-        toast(e.message || 'Пользователь не найден');
+        toast(e.message || 'Не удалось выдать доступ');
     }
 });
 
-function removeShareUser(userId) {
-    const col = collections.find(c => c.id === sharingCollectionId);
-    if (!col) return;
-    col.sharedWith = (col.sharedWith || []).filter(m => m.userId !== userId);
-    col.updatedAt = new Date().toISOString();
-    Storage.saveCollections(collections);
-    renderShareUserList();
-    renderCollections();
-    toast('Доступ закрыт');
+async function removeShareUser(userId) {
+    if (!sharingCollectionId) return;
+    try {
+        const data = await Storage.api('/api/collections/share', {
+            method: 'DELETE',
+            body: JSON.stringify({ collectionId: sharingCollectionId, userId })
+        });
+        const idx = collections.findIndex(c => c.id === sharingCollectionId);
+        if (idx >= 0 && data.collection) collections[idx] = data.collection;
+        renderShareUserList();
+        renderCollections();
+        toast('Доступ закрыт');
+    } catch (e) {
+        toast(e.message || 'Ошибка');
+    }
 }
 
 async function renderSharedWithMe() {
     const list = document.getElementById('shared-with-me-list');
     if (!list) return;
+    list.innerHTML = '<p class="hint">Загрузка...</p>';
     try {
         const data = await Storage.api('/api/shared-with-me');
-        if (!data.length) {
+        const rows = Array.isArray(data) ? data : [];
+        if (!rows.length) {
             list.innerHTML = '<div class="empty-state"><span>🔒</span><p>Нет общих закрытых подборок</p></div>';
             return;
         }
-        list.innerHTML = data.map(s => `
+        list.innerHTML = rows.map(s => {
+            const safeName = String(s.name || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            return `
             <div class="collection-card">
-                <h3>${s.name} <span class="badge-open">Общая</span></h3>
-                <div class="count">${s.itemCount} элементов · от ${s.ownerName || s.ownerEmail}</div>
+                <h3>${s.name || 'Подборка'} <span class="badge-open">Общая</span></h3>
+                <div class="count">${s.itemCount || 0} элементов · от ${s.ownerName || s.ownerEmail || 'пользователя'}</div>
                 <div class="collection-actions">
-                    <button class="btn-primary" onclick="openSharedCollection('${s.ownerId}','${s.collectionId}','${(s.name||'').replace(/'/g, "\'")}')">Смотреть</button>
+                    <button class="btn-primary" onclick="openSharedCollection('${s.ownerId}','${s.collectionId}','${safeName}')">Смотреть</button>
                 </div>
-            </div>
-        `).join('');
+            </div>`;
+        }).join('');
     } catch (e) {
-        list.innerHTML = '<p class="hint">Не удалось загрузить</p>';
+        console.error(e);
+        list.innerHTML = '<p class="hint" style="color:var(--danger)">Не удалось загрузить: ' + (e.message || '') + '</p>';
     }
 }
 

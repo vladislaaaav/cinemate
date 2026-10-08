@@ -353,30 +353,83 @@ async function handle(req, res) {
       return send(res, 200, { user: { id: found.id, name: found.name, email: found.email } });
     }
 
-    // Подборки, которыми поделились со мной
+    // Подборки, которыми поделились со мной (сканируем все коллекции — надёжнее inbox)
     if (p === '/api/shared-with-me' && req.method === 'GET') {
       var authSw = getAuthUser(req);
       if (!authSw) return send(res, 401, { error: 'Не авторизован' });
-      var inbox = readJSON(userFile(authSw.id, 'shared_inbox'), []);
       var result = [];
-      inbox.forEach(function (entry) {
-        var cols = readJSON(userFile(entry.ownerId, 'collections'), []);
-        var col = cols.find(function (c) { return c.id === entry.collectionId; });
-        if (!col) return;
-        var still = (col.sharedWith || []).some(function (m) { return m.userId === authSw.id; });
-        if (!still) return;
-        var owner = getUsers().find(function (u) { return u.id === entry.ownerId; });
-        result.push({
-          collectionId: col.id,
-          name: col.name,
-          ownerId: entry.ownerId,
-          ownerName: owner ? owner.name : 'Пользователь',
-          ownerEmail: owner ? owner.email : '',
-          itemCount: (col.itemIds || []).length,
-          updatedAt: col.updatedAt || col.createdAt || null
+      var files;
+      try { files = fs.readdirSync(DATA_DIR); } catch (e) { files = []; }
+      files.forEach(function (fname) {
+        if (!fname.endsWith('_collections.json')) return;
+        var ownerId = fname.slice(0, -('_collections.json'.length));
+        if (!ownerId || ownerId === authSw.id) return;
+        var cols = readJSON(path.join(DATA_DIR, fname), []);
+        if (!Array.isArray(cols)) return;
+        cols.forEach(function (col) {
+          if (!col || !Array.isArray(col.sharedWith)) return;
+          var member = col.sharedWith.find(function (m) { return m && m.userId === authSw.id; });
+          if (!member) return;
+          var owner = getUsers().find(function (u) { return u.id === ownerId; });
+          result.push({
+            collectionId: col.id,
+            name: col.name,
+            ownerId: ownerId,
+            ownerName: owner ? owner.name : 'Пользователь',
+            ownerEmail: owner ? owner.email : '',
+            itemCount: (col.itemIds || []).length,
+            updatedAt: col.updatedAt || col.createdAt || null
+          });
         });
       });
       return send(res, 200, result);
+    }
+
+    // Выдать доступ к подборке по email (на сервере)
+    if (p === '/api/collections/share' && req.method === 'POST') {
+      var authSh = getAuthUser(req);
+      if (!authSh) return send(res, 401, { error: 'Не авторизован' });
+      var bodySh = await parseBody(req);
+      var colIdSh = bodySh.collectionId;
+      var emailSh = String(bodySh.email || '').trim().toLowerCase();
+      if (!colIdSh || !emailSh) return send(res, 400, { error: 'Укажите подборку и email' });
+      var target = getUsers().find(function (u) { return u.email === emailSh; });
+      if (!target) return send(res, 404, { error: 'Пользователь с таким email не найден' });
+      if (target.id === authSh.id) return send(res, 400, { error: 'Нельзя добавить самого себя' });
+      var prevColsSh = readJSON(userFile(authSh.id, 'collections'), []);
+      var colsSh = prevColsSh.slice();
+      var colSh = colsSh.find(function (c) { return c.id === colIdSh; });
+      if (!colSh) return send(res, 404, { error: 'Подборка не найдена' });
+      if (!Array.isArray(colSh.sharedWith)) colSh.sharedWith = [];
+      if (colSh.sharedWith.some(function (m) { return m.userId === target.id; })) {
+        return send(res, 200, { ok: true, collection: colSh, message: 'Уже есть доступ' });
+      }
+      colSh.sharedWith.push({ userId: target.id, email: target.email, name: target.name });
+      colSh.updatedAt = new Date().toISOString();
+      writeJSON(userFile(authSh.id, 'collections'), colsSh);
+      updateSharesForUser(authSh.id, colsSh);
+      rebuildSharedInboxFromOwner(authSh.id, colsSh, prevColsSh);
+      return send(res, 200, { ok: true, collection: colSh });
+    }
+
+    // Забрать доступ
+    if (p === '/api/collections/share' && req.method === 'DELETE') {
+      var authUn = getAuthUser(req);
+      if (!authUn) return send(res, 401, { error: 'Не авторизован' });
+      var bodyUn = await parseBody(req);
+      var colIdUn = bodyUn.collectionId;
+      var userIdUn = bodyUn.userId;
+      if (!colIdUn || !userIdUn) return send(res, 400, { error: 'Некорректный запрос' });
+      var prevUn = readJSON(userFile(authUn.id, 'collections'), []);
+      var colsUn = prevUn.slice();
+      var colUn = colsUn.find(function (c) { return c.id === colIdUn; });
+      if (!colUn) return send(res, 404, { error: 'Подборка не найдена' });
+      colUn.sharedWith = (colUn.sharedWith || []).filter(function (m) { return m.userId !== userIdUn; });
+      colUn.updatedAt = new Date().toISOString();
+      writeJSON(userFile(authUn.id, 'collections'), colsUn);
+      updateSharesForUser(authUn.id, colsUn);
+      rebuildSharedInboxFromOwner(authUn.id, colsUn, prevUn);
+      return send(res, 200, { ok: true, collection: colUn });
     }
 
     // Просмотр чужой закрытой общей подборки
