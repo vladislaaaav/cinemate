@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cinemate — Каталог видеотеки</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <!-- Auth Screen -->
+    <div id="auth-screen" class="auth-screen">
+        <div class="auth-card">
+            <div class="auth-logo">🎬 Cinemate</div>
+            <div class="auth-tabs">
+                <button class="auth-tab active" data-auth="login">Вход</button>
+                <button class="auth-tab" data-auth="register">Регистрация</button>
+            </div>
+
+            <!-- Login -->
+            <form id="login-form" class="auth-form">
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="login-email" required placeholder="you@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Пароль</label>
+                    <div class="password-wrap">
+                        <input type="password" id="login-password" required placeholder="••••••••">
+                        <button type="button" class="eye-btn" data-target="login-password" title="Показать пароль">👁</button>
+                    </div>
+                </div>
+                <p id="login-error" class="auth-error"></p>
+                <button type="submit" class="btn-primary" style="width:100%">Войти</button>
+                <button type="button" id="forgot-btn" class="link-btn">Забыли пароль?</button>
+            </form>
+
+            <!-- Register -->
+            <form id="register-form" class="auth-form" style="display:none">
+                <div class="form-group">
+                    <label>Имя</label>
+                    <input type="text" id="reg-name" required placeholder="Как к вам обращаться">
+                </div>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="reg-email" required placeholder="you@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Пароль</label>
+                    <div class="password-wrap">
+                        <input type="password" id="reg-password" required minlength="4" placeholder="Минимум 4 символа">
+                        <button type="button" class="eye-btn" data-target="reg-password" title="Показать пароль">👁</button>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Повторите пароль</label>
+                    <div class="password-wrap">
+                        <input type="password" id="reg-password2" required placeholder="••••••••">
+                        <button type="button" class="eye-btn" data-target="reg-password2" title="Показать пароль">👁</button>
+                    </div>
+                </div>
+                <p id="register-error" class="auth-error"></p>
+                <button type="submit" class="btn-primary" style="width:100%">Зарегистрироваться</button>
+            </form>
+
+            <!-- Reset password -->
+            <form id="reset-form" class="auth-form" style="display:none">
+                <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px">Введите email аккаунта и новый пароль</p>
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" id="reset-email" required placeholder="you@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Новый пароль</label>
+                    <div class="password-wrap">
+                        <input type="password" id="reset-password" required minlength="4" placeholder="Минимум 4 символа">
+                        <button type="button" class="eye-btn" data-target="reset-password" title="Показать пароль">👁</button>
+                    </div>
+                </div>
+                <p id="reset-error" class="auth-error"></p>
+                <button type="submit" class="btn-primary" style="width:100%">Сбросить пароль</button>
+                <button type="button" id="back-to-login" class="link-btn">← Назад ко входу</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="app" id="app" style="display:none">
+        <!-- Mobile top bar -->
+        <header class="mobile-bar" id="mobile-bar">
+            <button type="button" class="menu-toggle" id="menu-toggle" aria-label="Меню">☰</button>
+            <span class="mobile-bar-title">🎬 Cinemate</span>
+            <span class="mobile-bar-spacer"></span>
+        </header>
+        <div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="logo">
+                <span class="logo-icon">🎬</span>
+                <span class="logo-text">Cinemate</span>
+                <button type="button" class="sidebar-close" id="sidebar-close" aria-label="Закрыть">×</button>
+            </div>
+            <nav class="nav">
+                <button class="nav-btn active" data-page="library">
+                    <span>📚</span> Библиотека
+                </button>
+                <button class="nav-btn" data-page="add">
+                    <span>➕</span> Добавить
+                </button>
+                <button class="nav-btn" data-page="collections">
+                    <span>📁</span> Подборки
+                </button>
+                <button class="nav-btn" data-page="analytics">
+                    <span>📊</span> Аналитика
+                </button>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="user-section">
+                    <div class="user-info">
+                        <span id="current-user-name">—</span>
+                        <small id="current-user-email"></small>
+                    </div>
+                    <button id="logout-btn" class="small-btn">Выйти</button>
+                </div>
+                <div class="stat-mini">
+                    <span id="total-count">0</span> единиц контента
+                </div>
+                <div class="theme-toggle-wrap">
+                    <button id="theme-toggle" class="theme-btn" title="Переключить тему">
+                        <span id="theme-icon">☀️</span>
+                        <span id="theme-label">Светлая</span>
+                    </button>
+                </div>
+                <div class="export-import">
+                    <button id="export-btn" class="small-btn" title="Экспорт библиотеки">⬇️ Экспорт</button>
+                    <label class="small-btn" title="Импорт библиотеки">
+                        ⬆️ Импорт
+                        <input type="file" id="import-input" accept=".json" hidden>
+                    </label>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main">
+            <!-- LIBRARY PAGE -->
+            <section id="page-library" class="page active">
+                <header class="page-header">
+                    <h1>Моя видеотека</h1>
+                    <div class="search-box">
+                        <input type="text" id="search-input" placeholder="Поиск по названию и жанрам (а также режиссёру, тегам)...">
+                    </div>
+                </header>
+
+                <div class="filters">
+                    <select id="filter-status">
+                        <option value="">Все статусы</option>
+                        <option value="planned">В планах</option>
+                        <option value="watching">В процессе</option>
+                        <option value="watched">Просмотрено</option>
+                    </select>
+                    <select id="filter-type">
+                        <option value="">Все типы</option>
+                        <option value="movie">Фильмы</option>
+                        <option value="series">Сериалы</option>
+                        <option value="documentary">Документальные</option>
+                    </select>
+                    <select id="filter-genre">
+                        <option value="">Все жанры</option>
+                        <!-- Жанры заполняются динамически из библиотеки -->
+                    </select>
+                    <select id="filter-source">
+                        <option value="">Все источники</option>
+                        <option value="streaming">Стриминг</option>
+                        <option value="local">Локальные файлы</option>
+                        <option value="physical">Физические носители</option>
+                    </select>
+                    <select id="filter-rating">
+                        <option value="">Любой рейтинг</option>
+                        <option value="5">5 ★</option>
+                        <option value="4">4+ ★</option>
+                        <option value="3">3+ ★</option>
+                    </select>
+                    <select id="sort-by">
+                        <option value="date-desc">Сначала новые</option>
+                        <option value="date-asc">Сначала старые</option>
+                        <option value="rating-desc">По рейтингу ↓</option>
+                        <option value="rating-asc">По рейтингу ↑</option>
+                        <option value="title-asc">По названию А-Я</option>
+                        <option value="title-desc">По названию Я-А</option>
+                    </select>
+                    <button id="clear-filters" class="btn-secondary">Сбросить</button>
+                </div>
+
+                <div id="collection-view-bar" class="bulk-bar" style="display:none;">
+                    <button id="back-to-collections" class="btn-secondary">← К подборкам</button>
+                    <span id="collection-view-title" style="font-weight:600"></span>
+                </div>
+
+                <div id="bulk-bar" class="bulk-bar" style="display:none;">
+                    <span id="selected-count">0 выбрано</span>
+                    <button id="bulk-add-collection" class="btn-primary">📁 В подборку</button>
+                    <button id="bulk-delete" class="btn-danger">🗑 Удалить</button>
+                    <button id="bulk-clear" class="btn-secondary">Снять выделение</button>
+                </div>
+
+                <div id="content-grid" class="content-grid"></div>
+            </section>
+
+            <!-- ADD PAGE -->
+            <section id="page-add" class="page">
+                <header class="page-header">
+                    <h1>Добавить контент</h1>
+                </header>
+
+                <div class="add-tabs">
+                    <button class="tab-btn active" data-tab="search">Поиск во внешней базе (TMDB)</button>
+                    <button class="tab-btn" data-tab="manual">Ручное добавление</button>
+                </div>
+
+                <div id="tab-search" class="tab-content active">
+                    <div class="search-external">
+                        <input type="text" id="tmdb-search" placeholder="Введите название фильма/сериала...">
+                        <button id="tmdb-search-btn" class="btn-primary">Найти</button>
+                    </div>
+                    <div id="tmdb-results" class="tmdb-results"></div>
+                    <p class="hint">Интеграция с TMDB: до 90% позиций добавляются автоматически с обложкой, описанием и метаданными. Время добавления: 20–30 сек.</p>
+                </div>
+
+                <div id="tab-manual" class="tab-content">
+                    <form id="manual-form" class="form">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Название *</label>
+                                <input type="text" id="m-title" required>
+                            </div>
+                            <div class="form-group">
+                                <label>Оригинальное название</label>
+                                <input type="text" id="m-original">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Тип *</label>
+                                <select id="m-type" required>
+                                    <option value="movie">Фильм</option>
+                                    <option value="series">Сериал</option>
+                                    <option value="documentary">Документальный проект</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Год</label>
+                                <input type="number" id="m-year" min="1900" max="2030">
+                            </div>
+                            <div class="form-group">
+                                <label>Режиссёр</label>
+                                <input type="text" id="m-director">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Жанры (через запятую)</label>
+                                <input type="text" id="m-genres" placeholder="драма, триллер, фантастика">
+                            </div>
+                            <div class="form-group">
+                                <label>Источник</label>
+                                <select id="m-source">
+                                    <option value="streaming">Стриминг</option>
+                                    <option value="local">Локальный файл</option>
+                                    <option value="physical">Физический носитель</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Описание</label>
+                            <textarea id="m-overview" rows="3"></textarea>
+                        </div>
+                        <div class="form-group">
+                            <label>Обложка (загрузить свою)</label>
+                            <label class="file-btn" for="m-poster">
+                                <span class="file-btn-icon">🖼</span>
+                                <span class="file-btn-text" id="m-poster-label">Выбрать изображение</span>
+                                <input type="file" id="m-poster" accept="image/*" hidden>
+                            </label>
+                            <div id="m-poster-preview" class="poster-preview"></div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Статус</label>
+                                <select id="m-status">
+                                    <option value="planned">В планах</option>
+                                    <option value="watching">В процессе</option>
+                                    <option value="watched">Просмотрено</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Рейтинг (1-5)</label>
+                                <select id="m-rating">
+                                    <option value="0">Без оценки</option>
+                                    <option value="1">1 ★</option>
+                                    <option value="2">2 ★</option>
+                                    <option value="3">3 ★</option>
+                                    <option value="4">4 ★</option>
+                                    <option value="5">5 ★</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Теги (через запятую)</label>
+                            <input type="text" id="m-tags" placeholder="Для вечера с семьей, Хоррор на Хеллоуин">
+                        </div>
+                        <div class="form-group">
+                            <label>Рецензия</label>
+                            <textarea id="m-review" rows="2"></textarea>
+                        </div>
+
+                        <!-- Seasons / Episodes block -->
+                        <div class="form-group series-only" style="display:none;">
+                            <label>Сезоны и эпизоды</label>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Всего сезонов</label>
+                                    <input type="number" id="m-seasons" min="1" placeholder="например 5">
+                                </div>
+                                <div class="form-group">
+                                    <label>Всего эпизодов</label>
+                                    <input type="number" id="m-episodes" min="1" placeholder="например 62">
+                                </div>
+                                <div class="form-group">
+                                    <label>Просмотрено эпизодов</label>
+                                    <input type="number" id="m-watched-episodes" min="0" placeholder="0">
+                                </div>
+                            </div>
+                        </div>
+
+                        <button type="submit" class="btn-primary">Добавить в библиотеку</button>
+                    </form>
+                </div>
+            </section>
+
+            <!-- COLLECTIONS PAGE -->
+            <section id="page-collections" class="page">
+                <header class="page-header">
+                    <h1>Виртуальные подборки</h1>
+                    <button id="create-collection-btn" class="btn-primary">+ Создать подборку</button>
+                </header>
+                <div id="collections-list" class="collections-list"></div>
+            </section>
+
+            <!-- ANALYTICS PAGE -->
+            <section id="page-analytics" class="page">
+                <header class="page-header">
+                    <h1>Аналитика</h1>
+                </header>
+                <div class="analytics-grid">
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-total">0</div>
+                        <div class="stat-label">Всего единиц</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-watched">0</div>
+                        <div class="stat-label">Просмотрено</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-watching">0</div>
+                        <div class="stat-label">В процессе</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="stat-planned">0</div>
+                        <div class="stat-label">В планах</div>
+                    </div>
+                </div>
+                <div class="charts-row">
+                    <div class="chart-container">
+                        <h3>Предпочтения по жанрам</h3>
+                        <canvas id="genres-chart"></canvas>
+                    </div>
+                    <div class="chart-container">
+                        <h3>По источникам</h3>
+                        <canvas id="sources-chart"></canvas>
+                    </div>
+                </div>
+                <div class="unfinished-section">
+                    <h3>Отчёт о недосмотренном контенте (включая сериалы с прогрессом)</h3>
+                    <div id="unfinished-list"></div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Modal for details / edit -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close">&times;</button>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <!-- Modal for new collection -->
+    <div id="collection-modal" class="modal">
+        <div class="modal-content small">
+            <button class="modal-close">&times;</button>
+            <h2>Новая подборка</h2>
+            <input type="text" id="collection-name" placeholder="Название подборки">
+            <button id="save-collection" class="btn-primary" style="margin-top:16px">Создать</button>
+        </div>
+    </div>
+
+    <!-- Modal: выбрать подборку -->
+    <div id="select-collection-modal" class="modal">
+        <div class="modal-content small">
+            <button class="modal-close">&times;</button>
+            <h2>Добавить в подборку</h2>
+            <div id="collection-list" class="collection-select-list"></div>
+            <div style="margin-top:16px; border-top:1px solid var(--border); padding-top:16px;">
+                <input type="text" id="new-collection-from-select" placeholder="Или создайте новую...">
+                <button id="create-and-add-btn" class="btn-primary" style="margin-top:10px;width:100%">Создать и добавить</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
