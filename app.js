@@ -1576,6 +1576,7 @@ function renderCollections() {
             <div class="count">${count} элементов</div>
             <div class="collection-actions">
                 <button class="btn-primary" onclick="openCollectionView('${col.id}')">Открыть</button>
+                <button class="btn-secondary" onclick="openAddFilmsToCollection('${col.id}')">➕ Добавить фильмы</button>
                 <button class="btn-secondary" onclick="toggleCollectionPublic('${col.id}')">${isPub ? 'Сделать закрытой' : 'Сделать открытой'}</button>
                 ${isPub ? `<button class="btn-secondary" onclick="copyCollectionLink('${col.id}')">📋 Ссылка</button>` : ''}
                 <button class="btn-secondary" onclick="openShareUserModal('${col.id}')">👥 Доступ</button>
@@ -1586,9 +1587,140 @@ function renderCollections() {
         </div>`;
     }).join('');
     renderSharedWithMe();
+    renderSavedPublic();
 }
 
 let sharingCollectionId = null;
+let addFilmsColId = null;
+
+
+
+// ===== Добавить фильмы в существующую подборку =====
+function openAddFilmsToCollection(colId) {
+    const col = collections.find(c => c.id === colId);
+    if (!col) return;
+    addFilmsColId = colId;
+    const inCol = new Set(col.itemIds || []);
+    const pool = (items || []).filter(i => !inCol.has(i.id));
+    const titleEl = document.getElementById('add-to-col-title');
+    if (titleEl) titleEl.textContent = 'Добавить в «' + col.name + '»';
+    const list = document.getElementById('add-to-col-list');
+    if (!list) return;
+    if (!pool.length) {
+        list.innerHTML = '<p class="hint">Все фильмы из библиотеки уже в этой подборке (или библиотека пуста)</p>';
+    } else {
+        list.innerHTML = pool.map(i => `
+            <label class="add-to-col-item">
+                <input type="checkbox" value="${i.id}">
+                ${i.poster ? `<img src="${i.poster}" alt="">` : '<span style="width:40px;text-align:center">🎬</span>'}
+                <span><strong>${i.title || ''}</strong> ${i.year ? '· ' + i.year : ''}</span>
+            </label>
+        `).join('');
+    }
+    document.getElementById('add-to-col-modal').classList.add('open');
+}
+
+document.getElementById('add-to-col-cancel')?.addEventListener('click', () => {
+    document.getElementById('add-to-col-modal')?.classList.remove('open');
+});
+
+document.getElementById('add-to-col-confirm')?.addEventListener('click', () => {
+    const col = collections.find(c => c.id === addFilmsColId);
+    if (!col) return;
+    const boxes = document.querySelectorAll('#add-to-col-list input[type="checkbox"]:checked');
+    let n = 0;
+    boxes.forEach(cb => {
+        const id = cb.value;
+        if (!col.itemIds.includes(id)) {
+            col.itemIds.push(id);
+            n++;
+        }
+    });
+    if (n === 0) {
+        toast('Ничего не выбрано');
+        return;
+    }
+    Storage.saveCollections(collections);
+    document.getElementById('add-to-col-modal')?.classList.remove('open');
+    renderCollections();
+    if (viewingCollectionId === addFilmsColId) renderLibrary();
+    toast('Добавлено в подборку: ' + n);
+});
+
+window.openAddFilmsToCollection = openAddFilmsToCollection;
+
+// ===== Сохранённые открытые подборки =====
+async function renderSavedPublic() {
+    const list = document.getElementById('saved-public-list');
+    if (!list) return;
+    try {
+        const data = await Storage.api('/api/saved-public');
+        const rows = Array.isArray(data) ? data : [];
+        if (!rows.length) {
+            list.innerHTML = '<div class="empty-state"><span>🔗</span><p>Нет сохранённых открытых подборок</p></div>';
+            return;
+        }
+        list.innerHTML = rows.map(s => `
+            <div class="collection-card">
+                <h3>${s.name || 'Подборка'} <span class="badge-open">Открытая · только просмотр</span></h3>
+                <div class="count">${s.ownerName ? 'от ' + s.ownerName : 'по ссылке'}</div>
+                <div class="collection-actions">
+                    <button class="btn-primary" onclick="openSavedPublic('${s.shareId}')">Смотреть</button>
+                    <button class="btn-secondary" onclick="removeSavedPublic('${s.shareId}')">Убрать из моих</button>
+                </div>
+            </div>
+        `).join('');
+    } catch (e) {
+        list.innerHTML = '<p class="hint">Не удалось загрузить</p>';
+    }
+}
+
+async function openSavedPublic(shareId) {
+    try {
+        const res = await fetch(`${API_BASE}/api/public/collection/${encodeURIComponent(shareId)}`);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || 'Подборка недоступна');
+        const modal = document.getElementById('modal');
+        const body = document.getElementById('modal-body');
+        const itemsList = data.items || [];
+        body.innerHTML = `
+            <h2>${data.name || 'Подборка'}</h2>
+            <p class="hint">Открытая подборка · только просмотр · редактирование недоступно</p>
+            <div class="content-grid" style="margin-top:16px">
+                ${itemsList.length ? itemsList.map(item => `
+                    <div class="card" style="cursor:default">
+                        <div class="card-poster">
+                            ${item.poster ? `<img src="${item.poster}" alt="" loading="lazy">` : '🎬'}
+                        </div>
+                        <div class="card-body">
+                            <div class="card-title">${item.title || ''}</div>
+                            <div class="card-meta">${item.year || '—'} · ${item.type === 'series' ? 'Сериал' : 'Фильм'}</div>
+                        </div>
+                    </div>
+                `).join('') : '<p class="hint">Пусто</p>'}
+            </div>`;
+        modal.classList.add('open');
+    } catch (e) {
+        toast(e.message || 'Не удалось открыть');
+    }
+}
+
+async function removeSavedPublic(shareId) {
+    if (!confirm('Убрать эту открытую подборку из списка?')) return;
+    try {
+        await Storage.api('/api/saved-public', {
+            method: 'DELETE',
+            body: JSON.stringify({ shareId })
+        });
+        toast('Убрано');
+        renderSavedPublic();
+    } catch (e) {
+        toast(e.message || 'Ошибка');
+    }
+}
+
+window.openSavedPublic = openSavedPublic;
+window.removeSavedPublic = removeSavedPublic;
 
 function openShareUserModal(colId) {
     const col = collections.find(c => c.id === colId);
@@ -2092,9 +2224,14 @@ async function showPublicShare(shareId) {
     const metaEl = document.getElementById('public-share-meta');
     const grid = document.getElementById('public-share-grid');
     const err = document.getElementById('public-share-error');
+    const saveBtn = document.getElementById('public-share-save');
     if (titleEl) titleEl.textContent = 'Загрузка...';
     if (grid) grid.innerHTML = '';
     if (err) { err.style.display = 'none'; err.textContent = ''; }
+    if (saveBtn) {
+        saveBtn.style.display = 'none';
+        saveBtn.onclick = null;
+    }
 
     try {
         const res = await fetch(`${API_BASE}/api/public/collection/${encodeURIComponent(shareId)}`);
@@ -2102,8 +2239,33 @@ async function showPublicShare(shareId) {
         if (!res.ok) throw new Error(data.error || 'Не удалось открыть подборку');
 
         if (titleEl) titleEl.textContent = data.name || 'Подборка';
-        if (metaEl) metaEl.textContent = `${data.itemCount || 0} фильмов · открытая подборка`;
+        if (metaEl) metaEl.textContent = `${data.itemCount || 0} фильмов · открытая подборка · только просмотр`;
         if (!grid) return;
+
+        // Кнопка «в мои подборки» — если есть токен
+        if (saveBtn && Storage.getToken()) {
+            saveBtn.style.display = 'inline-flex';
+            saveBtn.textContent = '📌 В мои подборки';
+            saveBtn.onclick = async () => {
+                try {
+                    const r = await Storage.api('/api/saved-public', {
+                        method: 'POST',
+                        body: JSON.stringify({ shareId })
+                    });
+                    toast(r.message || 'Сохранено в «Сохранённые открытые»');
+                    saveBtn.textContent = '✓ Сохранено';
+                } catch (e) {
+                    toast(e.message || 'Ошибка');
+                }
+            };
+        } else if (saveBtn) {
+            saveBtn.style.display = 'inline-flex';
+            saveBtn.textContent = '📌 Войти и сохранить';
+            saveBtn.onclick = () => {
+                toast('Войдите в аккаунт, чтобы сохранить подборку');
+                window.location.href = '/?saveShare=' + encodeURIComponent(shareId);
+            };
+        }
 
         const list = data.items || [];
         if (!list.length) {
@@ -2157,6 +2319,20 @@ function getShareIdFromUrl() {
             currentUser = data.user;
             Storage.setCachedUser(data.user);
             await showApp();
+            const saveShare = new URLSearchParams(location.search).get('saveShare');
+            if (saveShare) {
+                try {
+                    await Storage.api('/api/saved-public', {
+                        method: 'POST',
+                        body: JSON.stringify({ shareId: saveShare })
+                    });
+                    toast('Открытая подборка сохранена');
+                    history.replaceState({}, '', '/');
+                    document.querySelector('[data-page="collections"]')?.click();
+                } catch (e) {
+                    toast(e.message || 'Не удалось сохранить подборку');
+                }
+            }
         } catch {
             Storage.setToken(null);
             Storage.setCachedUser(null);

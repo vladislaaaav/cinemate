@@ -1559,3 +1559,40 @@ select {
     gap: 10px;
     align-items: stretch;
 }
+
+.add-to-col-list {
+    max-height: 50vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 12px;
+}
+.add-to-col-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    cursor: pointer;
+}
+.add-to-col-item:hover { border-color: var(--primary); }
+.add-to-col-item input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary);
+    flex-shrink: 0;
+}
+.add-to-col-item img {
+    width: 40px;
+    height: 60px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: var(--bg-hover);
+}
+.add-to-col-item span {
+    font-size: 14px;
+    flex: 1;
+}

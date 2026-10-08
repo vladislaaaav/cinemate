@@ -599,7 +599,53 @@ async function handle(req, res) {
     }
 
     // Публичная подборка по ссылке (без авторизации)
-    if (p.indexOf('/api/public/collection/') === 0 && req.method === 'GET') {
+        // Сохранённые открытые подборки пользователя (только ссылки, read-only)
+    if (p === '/api/saved-public' && req.method === 'GET') {
+      var authSp = getAuthUser(req);
+      if (!authSp) return send(res, 401, { error: 'Не авторизован' });
+      return send(res, 200, readJSON(userFile(authSp.id, 'saved_public'), []));
+    }
+
+    if (p === '/api/saved-public' && req.method === 'POST') {
+      var authSp2 = getAuthUser(req);
+      if (!authSp2) return send(res, 401, { error: 'Не авторизован' });
+      var bodySp = await parseBody(req);
+      var shareId = String(bodySp.shareId || '').trim();
+      if (!shareId) return send(res, 400, { error: 'Нет shareId' });
+      // проверяем что подборка существует и открыта
+      var sharesSp = getShares();
+      var metaSp = sharesSp[shareId];
+      if (!metaSp) return send(res, 404, { error: 'Открытая подборка не найдена' });
+      var colsSp = readJSON(userFile(metaSp.userId, 'collections'), []);
+      var colSp = colsSp.find(function (c) { return c.id === metaSp.collectionId && c.isPublic && c.shareId === shareId; });
+      if (!colSp) return send(res, 404, { error: 'Подборка закрыта или удалена' });
+      var listSp = readJSON(userFile(authSp2.id, 'saved_public'), []);
+      if (listSp.some(function (x) { return x.shareId === shareId; })) {
+        return send(res, 200, { ok: true, message: 'Уже сохранена', list: listSp });
+      }
+      var ownerSp = getUsers().find(function (u) { return u.id === metaSp.userId; });
+      listSp.unshift({
+        shareId: shareId,
+        name: colSp.name || 'Подборка',
+        ownerName: ownerSp ? ownerSp.name : '',
+        savedAt: new Date().toISOString()
+      });
+      writeJSON(userFile(authSp2.id, 'saved_public'), listSp);
+      return send(res, 200, { ok: true, list: listSp });
+    }
+
+    if (p === '/api/saved-public' && req.method === 'DELETE') {
+      var authSp3 = getAuthUser(req);
+      if (!authSp3) return send(res, 401, { error: 'Не авторизован' });
+      var bodySp3 = await parseBody(req);
+      var shareId3 = String(bodySp3.shareId || '').trim();
+      var listSp3 = readJSON(userFile(authSp3.id, 'saved_public'), []);
+      listSp3 = listSp3.filter(function (x) { return x.shareId !== shareId3; });
+      writeJSON(userFile(authSp3.id, 'saved_public'), listSp3);
+      return send(res, 200, { ok: true, list: listSp3 });
+    }
+
+if (p.indexOf('/api/public/collection/') === 0 && req.method === 'GET') {
       var shareId = p.split('/').pop();
       if (!shareId || shareId.length < 6) return send(res, 400, { error: 'Некорректная ссылка' });
       var shares = getShares();

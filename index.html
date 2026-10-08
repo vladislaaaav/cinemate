@@ -354,6 +354,9 @@
                 </header>
                 <h2 class="section-title">Мои подборки</h2>
                 <div id="collections-list" class="collections-list"></div>
+                <h2 class="section-title" style="margin-top:28px">Сохранённые открытые</h2>
+                <p class="hint" style="margin-bottom:12px">Открытые подборки по ссылке — только просмотр, без редактирования</p>
+                <div id="saved-public-list" class="collections-list"></div>
                 <h2 class="section-title" style="margin-top:28px">Доступные мне</h2>
                 <p class="hint" style="margin-bottom:12px">Закрытые подборки, которыми с вами поделились другие пользователи</p>
                 <div id="shared-with-me-list" class="collections-list"></div>
@@ -432,7 +435,10 @@
                     <h1 id="public-share-title">Подборка</h1>
                     <p id="public-share-meta" class="hint"></p>
                 </div>
-                <a href="/" class="btn-primary" id="public-share-home">Войти в Cinemate</a>
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                    <button type="button" class="btn-primary" id="public-share-save" style="display:none">📌 В мои подборки</button>
+                    <a href="/" class="btn-primary" id="public-share-home">Войти в Cinemate</a>
+                </div>
             </div>
             <div id="public-share-grid" class="content-grid"></div>
             <p id="public-share-error" class="hint" style="display:none;color:var(--danger)"></p>
@@ -495,6 +501,20 @@
             <button id="share-user-add" class="btn-primary" style="width:100%">Добавить доступ</button>
             <h3 style="font-size:14px;margin:18px 0 8px">Кто имеет доступ</h3>
             <div id="share-user-list"></div>
+        </div>
+    </div>
+
+    <!-- Добавить фильмы в существующую подборку -->
+    <div id="add-to-col-modal" class="modal">
+        <div class="modal-content">
+            <button class="modal-close">&times;</button>
+            <h2 id="add-to-col-title">Добавить в подборку</h2>
+            <p class="hint" id="add-to-col-hint">Отметьте фильмы из библиотеки</p>
+            <div id="add-to-col-list" class="add-to-col-list"></div>
+            <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap">
+                <button type="button" class="btn-primary" id="add-to-col-confirm">Добавить выбранные</button>
+                <button type="button" class="btn-secondary" id="add-to-col-cancel">Отмена</button>
+            </div>
         </div>
     </div>
 
