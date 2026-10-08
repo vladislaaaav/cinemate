@@ -67,6 +67,41 @@ function saveSessions(s) { writeJSON(SESSIONS_FILE, s); }
 function getShares() { return readJSON(SHARES_FILE, {}); }
 function saveShares(s) { writeJSON(SHARES_FILE, s); }
 
+/** Найти открытую подборку по shareId (индекс + полный скан) */
+function resolvePublicShare(shareId) {
+  if (!shareId) return null;
+  var shares = getShares();
+  var meta = shares[shareId];
+  if (meta) {
+    var cols = readJSON(userFile(meta.userId, 'collections'), []);
+    var col = cols.find(function (c) { return c && c.id === meta.collectionId; });
+    if (col && col.isPublic && col.shareId === shareId) {
+      return { ownerId: meta.userId, collection: col };
+    }
+  }
+  // fallback: сканируем все коллекции
+  var files;
+  try { files = fs.readdirSync(DATA_DIR); } catch (e) { files = []; }
+  for (var i = 0; i < files.length; i++) {
+    var fname = files[i];
+    if (!fname.endsWith('_collections.json')) continue;
+    var ownerId = fname.slice(0, -('_collections.json'.length));
+    var cols2 = readJSON(path.join(DATA_DIR, fname), []);
+    if (!Array.isArray(cols2)) continue;
+    for (var j = 0; j < cols2.length; j++) {
+      var c2 = cols2[j];
+      if (c2 && c2.isPublic && c2.shareId === shareId) {
+        // восстановить индекс
+        shares[shareId] = { userId: ownerId, collectionId: c2.id, name: c2.name || '' };
+        saveShares(shares);
+        return { ownerId: ownerId, collection: c2 };
+      }
+    }
+  }
+  return null;
+}
+
+
 /** Обновить индекс публичных ссылок для пользователя */
 function rebuildSharedInboxFromOwner(ownerId, cols, prevCols) {
   var affected = {};
@@ -608,30 +643,32 @@ async function handle(req, res) {
 
     if (p === '/api/saved-public' && req.method === 'POST') {
       var authSp2 = getAuthUser(req);
-      if (!authSp2) return send(res, 401, { error: 'Не авторизован' });
+      if (!authSp2) return send(res, 401, { error: 'Войдите в аккаунт, чтобы сохранить подборку' });
       var bodySp = await parseBody(req);
       var shareId = String(bodySp.shareId || '').trim();
       if (!shareId) return send(res, 400, { error: 'Нет shareId' });
-      // проверяем что подборка существует и открыта
-      var sharesSp = getShares();
-      var metaSp = sharesSp[shareId];
-      if (!metaSp) return send(res, 404, { error: 'Открытая подборка не найдена' });
-      var colsSp = readJSON(userFile(metaSp.userId, 'collections'), []);
-      var colSp = colsSp.find(function (c) { return c.id === metaSp.collectionId && c.isPublic && c.shareId === shareId; });
-      if (!colSp) return send(res, 404, { error: 'Подборка закрыта или удалена' });
+      var resolved = resolvePublicShare(shareId);
+      if (!resolved) return send(res, 404, { error: 'Открытая подборка не найдена или закрыта' });
+      var colSp = resolved.collection;
       var listSp = readJSON(userFile(authSp2.id, 'saved_public'), []);
       if (listSp.some(function (x) { return x.shareId === shareId; })) {
-        return send(res, 200, { ok: true, message: 'Уже сохранена', list: listSp });
+        return send(res, 200, { ok: true, message: 'Уже в «Сохранённые открытые»', list: listSp, name: colSp.name });
       }
-      var ownerSp = getUsers().find(function (u) { return u.id === metaSp.userId; });
+      var ownerSp = getUsers().find(function (u) { return u.id === resolved.ownerId; });
       listSp.unshift({
         shareId: shareId,
         name: colSp.name || 'Подборка',
         ownerName: ownerSp ? ownerSp.name : '',
+        ownerId: resolved.ownerId,
         savedAt: new Date().toISOString()
       });
       writeJSON(userFile(authSp2.id, 'saved_public'), listSp);
-      return send(res, 200, { ok: true, list: listSp });
+      return send(res, 200, {
+        ok: true,
+        message: 'Сохранено в разделе «Сохранённые открытые»',
+        list: listSp,
+        name: colSp.name
+      });
     }
 
     if (p === '/api/saved-public' && req.method === 'DELETE') {
@@ -648,14 +685,10 @@ async function handle(req, res) {
 if (p.indexOf('/api/public/collection/') === 0 && req.method === 'GET') {
       var shareId = p.split('/').pop();
       if (!shareId || shareId.length < 6) return send(res, 400, { error: 'Некорректная ссылка' });
-      var shares = getShares();
-      var meta = shares[shareId];
-      if (!meta) return send(res, 404, { error: 'Подборка не найдена или закрыта' });
-      var cols = readJSON(userFile(meta.userId, 'collections'), []);
-      var col = cols.find(function (c) { return c.id === meta.collectionId; });
-      if (!col || !col.isPublic || col.shareId !== shareId) {
-        return send(res, 404, { error: 'Подборка не найдена или закрыта' });
-      }
+      var resolvedPub = resolvePublicShare(shareId);
+      if (!resolvedPub) return send(res, 404, { error: 'Подборка не найдена или закрыта' });
+      var col = resolvedPub.collection;
+      var meta = { userId: resolvedPub.ownerId, collectionId: col.id };
       var allItems = readJSON(userFile(meta.userId, 'items'), []);
       var pubItems = (col.itemIds || []).map(function (id) {
         return allItems.find(function (i) { return i.id === id; });

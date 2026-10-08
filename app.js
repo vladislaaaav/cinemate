@@ -203,6 +203,7 @@ document.getElementById('register-form').addEventListener('submit', async (e) =>
         Storage.setCachedUser(data.user);
         currentUser = data.user;
         await showApp();
+        if (typeof finishPendingSaveShare === 'function') await finishPendingSaveShare();
     } catch (ex) {
         err.textContent = ex.message;
     }
@@ -223,6 +224,7 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
         Storage.setCachedUser(data.user);
         currentUser = data.user;
         await showApp();
+        if (typeof finishPendingSaveShare === 'function') await finishPendingSaveShare();
     } catch (ex) {
         err.textContent = ex.message;
     }
@@ -2242,29 +2244,41 @@ async function showPublicShare(shareId) {
         if (metaEl) metaEl.textContent = `${data.itemCount || 0} фильмов · открытая подборка · только просмотр`;
         if (!grid) return;
 
-        // Кнопка «в мои подборки» — если есть токен
-        if (saveBtn && Storage.getToken()) {
+        // Кнопка «в мои подборки»
+        if (saveBtn) {
             saveBtn.style.display = 'inline-flex';
-            saveBtn.textContent = '📌 В мои подборки';
-            saveBtn.onclick = async () => {
-                try {
-                    const r = await Storage.api('/api/saved-public', {
-                        method: 'POST',
-                        body: JSON.stringify({ shareId })
-                    });
-                    toast(r.message || 'Сохранено в «Сохранённые открытые»');
-                    saveBtn.textContent = '✓ Сохранено';
-                } catch (e) {
-                    toast(e.message || 'Ошибка');
-                }
-            };
-        } else if (saveBtn) {
-            saveBtn.style.display = 'inline-flex';
-            saveBtn.textContent = '📌 Войти и сохранить';
-            saveBtn.onclick = () => {
-                toast('Войдите в аккаунт, чтобы сохранить подборку');
-                window.location.href = '/?saveShare=' + encodeURIComponent(shareId);
-            };
+            const token = Storage.getToken();
+            if (token) {
+                saveBtn.textContent = '📌 В мои подборки';
+                saveBtn.onclick = async () => {
+                    saveBtn.disabled = true;
+                    try {
+                        const r = await Storage.api('/api/saved-public', {
+                            method: 'POST',
+                            body: JSON.stringify({ shareId })
+                        });
+                        saveBtn.textContent = '✓ В «Сохранённые открытые»';
+                        toast(r.message || 'Сохранено: Подборки → Сохранённые открытые');
+                        const go = confirm((r.message || 'Сохранено') + '\n\nОткрыть раздел «Подборки» сейчас?');
+                        if (go) window.location.href = '/?open=collections';
+                    } catch (e) {
+                        saveBtn.disabled = false;
+                        const msg = String(e.message || '');
+                        if (/авториз|Войдите|Не авторизован/i.test(msg)) {
+                            toast('Сначала войдите в аккаунт');
+                            window.location.href = '/?saveShare=' + encodeURIComponent(shareId);
+                        } else {
+                            toast(msg || 'Не удалось сохранить');
+                        }
+                    }
+                };
+            } else {
+                saveBtn.textContent = '📌 Войти и сохранить';
+                saveBtn.onclick = () => {
+                    toast('Чтобы сохранить подборку, войдите в аккаунт');
+                    window.location.href = '/?saveShare=' + encodeURIComponent(shareId);
+                };
+            }
         }
 
         const list = data.items || [];
@@ -2307,41 +2321,67 @@ function getShareIdFromUrl() {
 
 
 // ===== Init =====
+async function finishPendingSaveShare() {
+    const id = window.__pendingSaveShare || new URLSearchParams(location.search).get('saveShare');
+    if (!id || !Storage.getToken()) return;
+    window.__pendingSaveShare = null;
+    try {
+        const r = await Storage.api('/api/saved-public', {
+            method: 'POST',
+            body: JSON.stringify({ shareId: id })
+        });
+        history.replaceState({}, '', '/');
+        toast(r.message || 'Подборка сохранена в «Сохранённые открытые»');
+        document.querySelector('[data-page="collections"]')?.click();
+        if (typeof renderSavedPublic === 'function') renderSavedPublic();
+    } catch (e) {
+        toast(e.message || 'Не удалось сохранить подборку');
+    }
+}
+
 (async function init() {
-    const shareId = getShareIdFromUrl();
-    if (shareId) {
+    const params = new URLSearchParams(location.search);
+    const shareId = params.get('share') || '';
+    const saveShare = params.get('saveShare') || '';
+    const openPage = params.get('open') || '';
+
+    if (shareId && !saveShare) {
         await showPublicShare(shareId);
         return;
     }
+
     if (Storage.getToken()) {
         try {
             const data = await Storage.api('/api/me');
             currentUser = data.user;
             Storage.setCachedUser(data.user);
             await showApp();
-            const saveShare = new URLSearchParams(location.search).get('saveShare');
+
             if (saveShare) {
-                try {
-                    await Storage.api('/api/saved-public', {
-                        method: 'POST',
-                        body: JSON.stringify({ shareId: saveShare })
-                    });
-                    toast('Открытая подборка сохранена');
-                    history.replaceState({}, '', '/');
-                    document.querySelector('[data-page="collections"]')?.click();
-                } catch (e) {
-                    toast(e.message || 'Не удалось сохранить подборку');
-                }
+                window.__pendingSaveShare = saveShare;
+                await finishPendingSaveShare();
+            } else if (openPage === 'collections') {
+                history.replaceState({}, '', '/');
+                document.querySelector('[data-page="collections"]')?.click();
             }
         } catch {
             Storage.setToken(null);
             Storage.setCachedUser(null);
             showAuth();
+            if (saveShare) {
+                window.__pendingSaveShare = saveShare;
+                toast('Войдите, чтобы сохранить открытую подборку');
+            }
         }
     } else {
         showAuth();
+        if (saveShare) {
+            window.__pendingSaveShare = saveShare;
+            toast('Войдите или зарегистрируйтесь — подборка сохранится после входа');
+        }
     }
 })();
+
 
 // onclick-handlers from search cards
 window.addFromKP = addFromKP;
